@@ -83,3 +83,25 @@ export async function getChunks(meetingId) {
     req.onerror = () => { reject(req.error); db.close(); };
   });
 }
+
+
+export async function deleteMeetingFully(meetingId) {
+  const db = await openDb();
+  const tx = db.transaction([MEETINGS, CHUNKS], 'readwrite');
+  const meetings = tx.objectStore(MEETINGS);
+  const chunks = tx.objectStore(CHUNKS);
+  const byMeeting = chunks.index('byMeeting');
+
+  meetings.delete(meetingId);
+
+  const cursorReq = byMeeting.openCursor(IDBKeyRange.only(meetingId));
+  cursorReq.onsuccess = () => {
+    const cursor = cursorReq.result;
+    if (!cursor) return;
+    cursor.delete();
+    cursor.continue();
+  };
+
+  await txDone(tx);
+  db.close();
+}
