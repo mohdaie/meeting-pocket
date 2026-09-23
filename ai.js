@@ -31,8 +31,124 @@ async function blobToMono16k(blob) {
   }
 }
 
+function prepareMeetingAudio(input) {
+  if (!input?.length) return { audio: input, silent: true };
+
+  let mean = 0;
+  for (let i = 0; i < input.length; i++) mean += input[i];
+  mean /= input.length;
+
+  const audio = new Float32Array(input.length);
+  let peak = 0;
+  let sumSq = 0;
+  for (let i = 0; i < input.length; i++) {
+    const v = input[i] - mean;
+    audio[i] = v;
+    const a = Math.abs(v);
+    if (a > peak) peak = a;
+    sumSq += v * v;
+  }
+
+  const rms = Math.sqrt(sumSq / audio.length);
+  if (peak < 0.003 || rms < 0.00035) {
+    return { audio, silent: true, peak, rms };
+  }
+
+  // Quiet room recordings benefit from a conservative digital gain before
+  // Whisper. Cap it so background noise is not amplified excessively.
+  const gain = Math.min(5, Math.max(1, 0.82 / Math.max(peak, 0.001)));
+  if (gain > 1.05) {
+    for (let i = 0; i < audio.length; i++) {
+      audio[i] = Math.max(-1, Math.min(1, audio[i] * gain));
+    }
+  }
+
+  return { audio, silent: false, peak, rms, gain };
+}
+
+function normalizeWords(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}'-]+/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function repetitionScore(text) {
+  const words = normalizeWords(text);
+  if (words.length < 10) return 0;
+
+  const counts = new Map();
+  for (const w of words) counts.set(w, (counts.get(w) || 0) + 1);
+  const dominantWord = Math.max(...counts.values()) / words.length;
+
+  let maxPhraseRun = 1;
+  for (let n = 1; n <= Math.min(5, Math.floor(words.length / 4)); n++) {
+    for (let i = 0; i + n * 4 <= words.length; i++) {
+      const phrase = words.slice(i, i + n).join(' ');
+      let run = 1;
+      let pos = i + n;
+      while (pos + n <= words.length && words.slice(pos, pos + n).join(' ') === phrase) {
+        run++;
+        pos += n;
+      }
+      if (run > maxPhraseRun) maxPhraseRun = run;
+    }
+  }
+
+  if (maxPhraseRun >= 5) return 1;
+  if (dominantWord >= 0.5) return 0.95;
+  if (maxPhraseRun >= 4) return 0.9;
+  return dominantWord;
+}
+
+function cleanChunkText(text) {
+  return (text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/([.!?])\1+/g, '$1')
+    .trim();
+}
+
+function filterTranscript(result) {
+  const sourceChunks = Array.isArray(result?.chunks) ? result.chunks : [];
+  let filteredSegments = 0;
+
+  if (sourceChunks.length) {
+    const chunks = [];
+    for (const chunk of sourceChunks) {
+      const text = cleanChunkText(chunk?.text || '');
+      if (!text) continue;
+      if (repetitionScore(text) >= 0.9) {
+        filteredSegments++;
+        chunks.push({ ...chunk, text: '[unclear audio]' });
+      } else {
+        chunks.push({ ...chunk, text });
+      }
+    }
+
+    // Avoid long runs of identical unclear markers.
+    const compact = chunks.filter((chunk, i) =>
+      chunk.text !== '[unclear audio]' || i === 0 || chunks[i - 1]?.text !== '[unclear audio]'
+    );
+
+    return {
+      text: compact.map(x => x.text).join(' ').replace(/\s+/g, ' ').trim(),
+      chunks: compact,
+      filteredSegments,
+    };
+  }
+
+  const text = cleanChunkText(result?.text || '');
+  if (repetitionScore(text) >= 0.9) {
+    return { text: '[unclear audio]', chunks: [], filteredSegments: 1 };
+  }
+  return { text, chunks: [], filteredSegments: 0 };
+}
+
 export async function transcribeBlob(blob, {
-  model = 'onnx-community/whisper-base',
+  model = 'onnx-community/whisper-small',
+  language = 'auto',
   onProgress = () => {},
 } = {}) {
   const { pipeline } = await lib();
@@ -55,19 +171,25 @@ export async function transcribeBlob(blob, {
     transcriberKey = key;
   }
 
-  onProgress('Preparing audio…');
-  const audio = await blobToMono16k(blob);
+  onProgress('Preparing meeting audio…');
+  const decoded = await blobToMono16k(blob);
+  const prepared = prepareMeetingAudio(decoded);
+  if (prepared.silent) {
+    return { text: '', chunks: [], filteredSegments: 0 };
+  }
+
   onProgress('Transcribing locally…');
-  const result = await transcriber(audio, {
-    chunk_length_s: 25,
-    stride_length_s: 5,
+  const options = {
+    chunk_length_s: 28,
+    stride_length_s: 4,
     return_timestamps: true,
     task: 'transcribe',
-  });
-  return {
-    text: (result?.text || '').trim(),
-    chunks: result?.chunks || [],
   };
+  if (language && language !== 'auto') options.language = language;
+
+  const result = await transcriber(prepared.audio, options);
+  onProgress('Cleaning transcript…');
+  return filterTranscript(result);
 }
 
 async function getGenerator(model, onProgress) {
@@ -126,7 +248,7 @@ export async function summarizeTranscript(text, {
   for (let i = 0; i < parts.length; i++) {
     onProgress(`Analysing part ${i + 1}/${parts.length}…`);
     const response = await generateText([
-      { role: 'system', content: 'You extract facts from meeting transcripts. Do not invent facts. Keep names, dates, numbers, decisions, actions and unresolved questions.' },
+      { role: 'system', content: 'You extract facts from meeting transcripts. Treat [unclear audio] as missing information. Do not invent facts. Keep names, dates, numbers, decisions, actions and unresolved questions.' },
       { role: 'user', content: `Summarize this transcript chunk in concise bullet points. Preserve important details.\n\n${parts[i]}` },
     ], model, onProgress, 280);
     mini.push(response);
@@ -134,7 +256,7 @@ export async function summarizeTranscript(text, {
 
   onProgress('Building meeting brief…');
   return await generateText([
-    { role: 'system', content: 'You are a meeting-notes assistant. Use only the supplied notes. If something is uncertain, say it is unclear. Never invent owners or deadlines.' },
+    { role: 'system', content: 'You are a meeting-notes assistant. Use only the supplied notes. Treat [unclear audio] as missing information. If something is uncertain, say it is unclear. Never invent owners or deadlines.' },
     { role: 'user', content: `Create a concise meeting brief from these chunk notes. Use exactly these headings:\nOVERVIEW\nDECISIONS\nACTION ITEMS\nDATES & NUMBERS\nRISKS / CONCERNS\nOPEN QUESTIONS\n\nChunk notes:\n${mini.join('\n\n---\n\n')}` },
   ], model, onProgress, 500);
 }
@@ -154,7 +276,7 @@ export async function askMeeting(question, transcript, {
 
   onProgress('Reading relevant transcript…');
   return await generateText([
-    { role: 'system', content: 'Answer questions about a meeting using only the provided transcript excerpts. Be concise. If the answer is not supported, say it was not clearly mentioned.' },
+    { role: 'system', content: 'Answer questions about a meeting using only the provided transcript excerpts. Treat [unclear audio] as missing information. Be concise. If the answer is not supported, say it was not clearly mentioned.' },
     { role: 'user', content: `Question: ${question}\n\nTranscript excerpts:\n${selected}` },
   ], model, onProgress, 260);
 }
