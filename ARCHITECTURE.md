@@ -1,26 +1,36 @@
-# Architecture
+# Architecture — v0.4.0
 
 ```text
-Microphone
+Microphone / earbuds microphone
    ↓
-MediaRecorder (30 s chunks)
+MediaRecorder (30 s recoverable chunks)
    ↓
-IndexedDB ───────────────→ crash recovery / meeting history
+IndexedDB ───────────────→ local meeting history / permanent delete
    ↓
-Assemble meeting Blob
+Assemble meeting Blob after recording
    ↓
-Transformers.js
-   ├── Whisper multilingual → transcript
-   └── Qwen2.5 0.5B → chunk summaries → final brief
-                           └→ Ask This Meeting
+Transcription router (Auto)
+   ├── Gemini 3.5 Transcribe
+   │     └── EN / MS / ZH / TA code-switching, automatic multilingual STT
+   ├── Groq Whisper Large V3 (optional fallback)
+   └── Local Transformers.js Whisper (offline fallback)
+            ↓
+        Transcript
+            ↓
+Local Qwen2.5 0.5B
+   ├── Meeting brief
+   └── Ask This Meeting
 ```
 
-## Reliability rule
-Recording is the critical path. AI must never prevent recording. Models are lazy-loaded only after a meeting is recorded.
+## Reliability rules
 
-## Recommended next iterations
-- V0.2: background transcription queue without competing with MediaRecorder.
-- V0.3: speaker-labeling/diarization experiment.
-- V0.4: export Markdown / TXT / audio.
-- V0.5: optional encrypted sync.
-- V1.0: Android native wrapper only if true screen-off recording is required.
+1. Recording must never depend on AI availability.
+2. Audio is saved locally before transcription starts.
+3. Auto transcription degrades gracefully: Gemini → Groq → local Whisper.
+4. API keys are never committed to the repository.
+5. Provider failures must leave the original recording intact for retry.
+6. PWA shell uses network-first refresh with cached offline fallback.
+
+## Security note
+
+The current static GitHub Pages deployment supports personal BYOK configuration stored on-device. A shared production credential must be moved behind a backend proxy or an equivalent server-side secret boundary.
