@@ -1,43 +1,50 @@
-# Meeting Pocket PWA — v0.1.0
+# Meeting Pocket PWA — v0.4.0
 
-A local-first meeting companion: record → transcribe → summarize → ask questions.
+A quiet meeting companion: record → multilingual transcribe → summarize → ask questions.
 
-## Why this architecture
+## v0.4.0 transcription architecture
 
-- **No paid AI API by default.** AI runs in the browser with Transformers.js.
-- **Audio is stored locally in IndexedDB.** 30-second chunks reduce the chance of losing a long meeting after a crash.
-- **Whisper multilingual** handles English/Malay mixed meetings better than English-only models.
-- **Qwen2.5 0.5B Instruct** is the local summary/Q&A model, using quantized WebGPU inference when available.
-- **Near-black recording UI** and no app-generated sound/vibration. The app does not attempt to hide OS microphone/privacy indicators.
-- **Screen Wake Lock is optional and enabled by default** because phones may suspend browser work when the screen is off. The UI stays nearly black instead.
+Meeting Pocket no longer asks you to choose one meeting language.
 
-## First use
+**Auto mode** uses this order:
 
-The first transcription/summary downloads local AI model assets from Hugging Face. Browser/model caching makes later runs much faster.
+1. **Gemini 3.5 Transcribe** — preferred. Automatic multilingual/code-switching transcription for English, Malay, Mandarin and Tamil.
+2. **Groq Whisper Large V3** — optional cloud fallback when a Groq key is configured.
+3. **Local Whisper** — on-device fallback that works without an API key.
 
-Default AI:
-- Speech: `onnx-community/whisper-base`
+The provider that actually produced a transcript is shown in the transcript status.
+
+## API keys
+
+The public GitHub repository contains **no Gemini or Groq API key**.
+
+For personal use, keys entered in Settings are stored in this browser's localStorage on this device and sent only to the selected provider when transcription runs. They are not written into meeting records, committed to GitHub, or synchronized by Meeting Pocket.
+
+For a public multi-user production deployment, move provider credentials behind a backend proxy rather than embedding a shared key in the PWA.
+
+## Recording and storage
+
+- Audio recording uses MediaRecorder.
+- 30-second recoverable chunks are stored locally in IndexedDB.
+- A meeting is reassembled only when transcription is requested.
+- Meeting audio, transcript and summary can be permanently deleted from IndexedDB.
+- Cloud transcription sends the assembled recording to the configured provider.
+- Gemini temporary uploaded files are deleted after transcription when the Files API path is used.
+- Local mode keeps transcription entirely on-device.
+
+## Local AI fallback
+
+- Speech: `onnx-community/whisper-small` by default
 - Summary/Q&A: `onnx-community/Qwen2.5-0.5B-Instruct`
-- Browser runtime: `@huggingface/transformers@4.3.0`
+- Runtime: `@huggingface/transformers@4.3.0`
+- WebGPU is used when available; WASM is the fallback.
 
-For a faster first test, switch speech model in Settings to Whisper Tiny multilingual.
+## Mobile reliability
 
-## Current V0.1 scope
+Recording is always the critical path. AI is loaded or contacted only after the recording has stopped, so transcription failure should not prevent the audio from being saved.
 
-1. Start meeting
-2. Microphone recording
-3. 30-second crash-recoverable IndexedDB chunks
-4. Near-black recording UI
-5. Optional screen wake lock
-6. Local Whisper transcription
-7. Chunked local Qwen meeting summary
-8. Ask-this-meeting Q&A
-9. PWA manifest and offline app-shell cache
-
-## Important mobile limitation
-
-A PWA cannot guarantee reliable microphone recording after the OS fully turns the screen off or aggressively suspends the browser. V0.1 keeps the display awake when possible while rendering an almost-black interface. If true screen-off/background recording becomes a hard requirement, the next step should be a native Android wrapper/service.
+A PWA cannot guarantee microphone recording after the OS fully turns the display off or suspends the browser. Meeting Pocket can request a screen wake lock and render a nearly black recording UI instead.
 
 ## Privacy / recording consent
 
-The app is designed for local processing. Users remain responsible for workplace policies and applicable recording/consent rules. The app must not attempt to suppress Android/iOS microphone privacy indicators.
+Users remain responsible for workplace policies and applicable recording/consent rules. Meeting Pocket does not attempt to suppress Android/iOS microphone privacy indicators.
