@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon.svg" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=0.4.0" />
   <title>Meeting Pocket</title>
 </head>
 <body>
@@ -25,7 +25,7 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.3.3</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.0</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
         <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
@@ -139,21 +139,31 @@
           <button id="refreshMicsBtn" class="secondary-btn" type="button">Refresh microphones</button>
         </label>
         <label class="field">
-          <span>Speech model</span>
+          <span>Transcription engine</span>
+          <select id="transcriptionEngineSelect">
+            <option value="auto" selected>Auto · Gemini → Groq → Local</option>
+            <option value="gemini">Gemini 3.5 Transcribe only</option>
+            <option value="groq">Groq Whisper Large V3 only</option>
+            <option value="local">Private / offline · Local Whisper</option>
+          </select>
+          <small class="field-help">Auto detects English, Malay, Mandarin and Tamil without choosing one meeting language.</small>
+        </label>
+        <label class="field">
+          <span>Gemini API key · recommended</span>
+          <input id="geminiApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Gemini API key" />
+          <small class="field-help">Stored only in this browser on this device. It is never written to the GitHub repo.</small>
+        </label>
+        <label class="field">
+          <span>Groq API key · optional fallback</span>
+          <input id="groqApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Groq key or leave blank" />
+          <small class="field-help">Used only if Gemini is unavailable in Auto mode.</small>
+        </label>
+        <label class="field">
+          <span>Local fallback model</span>
           <select id="speechModelSelect">
             <option value="onnx-community/whisper-small" selected>Accurate · Whisper Small multilingual</option>
             <option value="onnx-community/whisper-base">Balanced · Whisper Base multilingual</option>
             <option value="onnx-community/whisper-tiny">Fast · Whisper Tiny multilingual</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Meeting language</span>
-          <select id="transcriptLanguageSelect">
-            <option value="auto" selected>Auto · best for mixed-language meetings</option>
-            <option value="english">English</option>
-            <option value="malay">Malay</option>
-            <option value="chinese">Chinese · Mandarin</option>
-            <option value="tamil">Tamil</option>
           </select>
         </label>
         <label class="field">
@@ -166,12 +176,12 @@
           <input id="keepAwakeToggle" type="checkbox" checked />
           <span>Keep screen awake while recording</span>
         </label>
-        <p class="footnote">This app stays silent and dim, but it does not hide system microphone/privacy indicators.</p>
+        <p class="footnote">Cloud transcription sends the recorded audio to the selected AI provider. API keys stay on this device; they are not committed or synced. Choose Local mode to keep transcription entirely on-device. This app stays silent and dim, but it does not hide system microphone/privacy indicators.</p>
         <button class="primary-btn" value="close">Done</button>
       </form>
     </dialog>
   </main>
 
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=0.4.0"></script>
 </body>
 </html>
