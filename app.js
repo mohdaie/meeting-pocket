@@ -120,7 +120,9 @@ async function refreshAudioInputs({ requestPermission = false } = {}) {
       if (micHelp) micHelp.textContent = 'Selected microphone will be requested when recording starts.';
     } else {
       audioInputSelect.value = '';
-      if (saved) localStorage.removeItem(MIC_STORAGE_KEY);
+      // Without microphone permission browsers may hide non-default devices.
+      // Only discard a stale saved device after an explicit permissioned refresh.
+      if (saved && requestPermission) localStorage.removeItem(MIC_STORAGE_KEY);
       if (micHelp) micHelp.textContent = devices.some(d => d.label)
         ? 'Choose earbuds, headset, USB mic, or leave Automatic.'
         : 'Tap Refresh microphones to allow access and reveal device names.';
