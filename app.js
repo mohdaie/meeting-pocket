@@ -11,9 +11,14 @@ const timerEl = $('#timer');
 const chunkStatus = $('#chunkStatus');
 const meetingList = $('#meetingList');
 const capabilityPill = $('#capabilityPill');
+const selectedMicPill = $('#selectedMicPill');
+const recordingMic = $('#recordingMic');
 const settingsDialog = $('#settingsDialog');
 const historyDialog = $('#historyDialog');
 const idleTimerEl = $('#idleTimer');
+const audioInputSelect = $('#audioInputSelect');
+const refreshMicsBtn = $('#refreshMicsBtn');
+const micHelp = $('#micHelp');
 const speechModelSelect = $('#speechModelSelect');
 const transcriptLanguageSelect = $('#transcriptLanguageSelect');
 const summaryModelSelect = $('#summaryModelSelect');
@@ -56,6 +61,86 @@ function detectCapabilities() {
   capabilityPill.textContent = ready
     ? `Ready to record locally · ${webgpu ? 'WebGPU available' : 'browser AI fallback mode'}`
     : 'This browser may not support local recording properly.';
+}
+
+const MIC_STORAGE_KEY = 'meeting-pocket-audio-input';
+
+function selectedMicId() {
+  return localStorage.getItem(MIC_STORAGE_KEY) || '';
+}
+
+function selectedMicLabel() {
+  if (!audioInputSelect) return 'Automatic';
+  const option = audioInputSelect.options[audioInputSelect.selectedIndex];
+  return option?.textContent || 'Automatic';
+}
+
+function updateSelectedMicUi() {
+  if (!selectedMicPill) return;
+  const label = selectedMicLabel().replace(/^Automatic.*$/i, 'Automatic');
+  selectedMicPill.textContent = `🎤 Microphone: ${label}`;
+}
+
+async function refreshAudioInputs({ requestPermission = false } = {}) {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    if (micHelp) micHelp.textContent = 'This browser cannot list microphone inputs.';
+    return;
+  }
+
+  let temporaryStream = null;
+  if (requestPermission) {
+    try {
+      temporaryStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (err) {
+      if (micHelp) micHelp.textContent = `Microphone access failed: ${err.message || err}`;
+      return;
+    }
+  }
+
+  try {
+    const saved = selectedMicId();
+    const devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter(d => d.kind === 'audioinput');
+
+    audioInputSelect.innerHTML = '';
+    const automatic = document.createElement('option');
+    automatic.value = '';
+    automatic.textContent = 'Automatic · Android chooses';
+    audioInputSelect.appendChild(automatic);
+
+    devices.forEach((device, index) => {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = device.label || `Microphone ${index + 1}`;
+      audioInputSelect.appendChild(option);
+    });
+
+    if (saved && devices.some(d => d.deviceId === saved)) {
+      audioInputSelect.value = saved;
+      if (micHelp) micHelp.textContent = 'Selected microphone will be requested when recording starts.';
+    } else {
+      audioInputSelect.value = '';
+      if (saved) localStorage.removeItem(MIC_STORAGE_KEY);
+      if (micHelp) micHelp.textContent = devices.some(d => d.label)
+        ? 'Choose earbuds, headset, USB mic, or leave Automatic.'
+        : 'Tap Refresh microphones to allow access and reveal device names.';
+    }
+    updateSelectedMicUi();
+  } finally {
+    temporaryStream?.getTracks().forEach(track => track.stop());
+  }
+}
+
+function meetingAudioConstraints(deviceId = '') {
+  const audio = {
+    echoCancellation: false,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+    sampleRate: 48000,
+  };
+  if (deviceId) audio.deviceId = { exact: deviceId };
+  return audio;
 }
 
 async function refreshHistory() {
@@ -133,23 +218,38 @@ async function startRecording() {
     return;
   }
 
+  const preferredDeviceId = selectedMicId();
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        // Meeting-room capture: preserve natural far-field speech instead of
-        // applying aggressive call-style echo cancellation.
-        echoCancellation: false,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        sampleRate: 48000,
-      },
+      audio: meetingAudioConstraints(preferredDeviceId),
       video: false,
     });
   } catch (err) {
-    alert(`Microphone access failed: ${err.message || err}`);
-    return;
+    // Bluetooth devices can disappear or receive a new browser deviceId.
+    // Fall back to Android's active/default microphone rather than blocking recording.
+    if (preferredDeviceId && (err?.name === 'OverconstrainedError' || err?.name === 'NotFoundError')) {
+      localStorage.removeItem(MIC_STORAGE_KEY);
+      audioInputSelect.value = '';
+      updateSelectedMicUi();
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: meetingAudioConstraints(''),
+          video: false,
+        });
+      } catch (fallbackErr) {
+        alert(`Microphone access failed: ${fallbackErr.message || fallbackErr}`);
+        return;
+      }
+    } else {
+      alert(`Microphone access failed: ${err.message || err}`);
+      return;
+    }
   }
+
+  const activeTrack = mediaStream.getAudioTracks()[0];
+  const activeMicLabel = activeTrack?.label || 'Active microphone';
+  if (recordingMic) recordingMic.textContent = `🎤 ${activeMicLabel}`;
+  if (selectedMicPill) selectedMicPill.textContent = `🎤 Microphone: ${activeMicLabel}`;
 
   currentMeetingId = crypto.randomUUID();
   startedAt = Date.now();
@@ -167,6 +267,7 @@ async function startRecording() {
     transcriptChunks: [],
     summary: '',
     status: 'recording',
+    inputDeviceLabel: mediaStream.getAudioTracks()[0]?.label || 'Active microphone',
   };
 
   const mimeType = pickMimeType();
@@ -348,7 +449,17 @@ $('#startBtn').onclick = startRecording;
 $('#stopBtn').onclick = stopRecording;
 $('#backBtn').onclick = async () => { showView(homeView); await refreshHistory(); };
 $('#dimBtn').onclick = () => document.body.classList.toggle('ultra-dim');
-$('#settingsBtn').onclick = () => settingsDialog.showModal();
+$('#settingsBtn').onclick = async () => {
+  await refreshAudioInputs();
+  settingsDialog.showModal();
+};
+refreshMicsBtn.onclick = () => refreshAudioInputs({ requestPermission: true });
+audioInputSelect.onchange = () => {
+  const value = audioInputSelect.value || '';
+  if (value) localStorage.setItem(MIC_STORAGE_KEY, value);
+  else localStorage.removeItem(MIC_STORAGE_KEY);
+  updateSelectedMicUi();
+};
 $('#historyBtn').onclick = async () => {
   await refreshHistory();
   historyDialog.showModal();
@@ -368,6 +479,13 @@ document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && mediaRecorder?.state === 'recording') await requestWakeLock();
 });
 
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    if (!mediaStream) refreshAudioInputs().catch(() => {});
+  });
+}
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 detectCapabilities();
+refreshAudioInputs().catch(() => {});
 refreshHistory();
