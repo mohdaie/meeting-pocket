@@ -27,6 +27,7 @@ let currentMeeting = null;
 let chunkIndex = 0;
 let wakeLock = null;
 let stopping = false;
+let pendingChunkSaves = [];
 
 function showView(view) {
   [homeView, recordView, meetingView].forEach(v => v.classList.remove('active'));
@@ -114,6 +115,7 @@ async function startRecording() {
   startedAt = Date.now();
   chunkIndex = 0;
   stopping = false;
+  pendingChunkSaves = [];
   currentMeeting = {
     id: currentMeetingId,
     title: `Meeting · ${new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit'}).format(new Date())}`,
@@ -132,12 +134,13 @@ async function startRecording() {
   await putMeeting(currentMeeting);
 
   mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
-  mediaRecorder.addEventListener('dataavailable', async (event) => {
+  mediaRecorder.addEventListener('dataavailable', (event) => {
     if (!event.data || !event.data.size) return;
     const idx = chunkIndex++;
-    chunkStatus.textContent = `Saved chunk ${idx + 1} locally`;
-    try { await putChunk(currentMeetingId, idx, event.data); }
-    catch { chunkStatus.textContent = 'Warning: local save failed'; }
+    const save = putChunk(currentMeetingId, idx, event.data)
+      .then(() => { chunkStatus.textContent = `Saved chunk ${idx + 1} locally`; })
+      .catch(() => { chunkStatus.textContent = 'Warning: local save failed'; });
+    pendingChunkSaves.push(save);
   });
   mediaRecorder.addEventListener('stop', finishRecording);
 
@@ -158,8 +161,7 @@ async function stopRecording() {
   stopping = true;
   $('#stopBtn').disabled = true;
   chunkStatus.textContent = 'Finishing recording…';
-  mediaRecorder.requestData();
-  setTimeout(() => mediaRecorder?.state !== 'inactive' && mediaRecorder.stop(), 120);
+  mediaRecorder.stop();
 }
 
 async function finishRecording() {
@@ -168,6 +170,7 @@ async function finishRecording() {
   await releaseWakeLock();
   mediaStream?.getTracks().forEach(t => t.stop());
   mediaStream = null;
+  await Promise.allSettled(pendingChunkSaves);
   document.body.classList.remove('ultra-dim');
   $('#stopBtn').disabled = false;
 
@@ -203,41 +206,25 @@ async function doTranscribe() {
     const rows = await getChunks(currentMeeting.id);
     if (!rows.length) throw new Error('No recorded audio chunks found.');
 
-    const texts = [];
-    const timedChunks = [];
-    let offsetSec = 0;
+    // MediaRecorder timeslice blobs are fragments of one continuous WebM/MP4
+    // container. Later fragments often cannot be decoded by themselves on Android.
+    // Reassemble the original recording first, then decode/transcribe it once.
+    const mimeType = currentMeeting.mimeType || rows[0]?.blob?.type || 'audio/webm';
+    const completeRecording = new Blob(rows.map(row => row.blob), { type: mimeType });
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const result = await transcribeBlob(row.blob, {
-        model: speechModelSelect.value,
-        onProgress: (s) => $('#transcriptStatus').textContent = `Chunk ${i + 1}/${rows.length} · ${s}`,
-      });
+    const result = await transcribeBlob(completeRecording, {
+      model: speechModelSelect.value,
+      onProgress: (s) => $('#transcriptStatus').textContent = s,
+    });
 
-      if (result.text) texts.push(result.text);
-      for (const chunk of result.chunks || []) {
-        const ts = Array.isArray(chunk.timestamp) ? chunk.timestamp : null;
-        timedChunks.push({
-          ...chunk,
-          timestamp: ts ? [
-            Number.isFinite(ts[0]) ? ts[0] + offsetSec : ts[0],
-            Number.isFinite(ts[1]) ? ts[1] + offsetSec : ts[1],
-          ] : ts,
-        });
-      }
-
-      // Save progress after every chunk so a long transcription can resume manually
-      // without risking the already captured meeting audio.
-      currentMeeting.transcript = texts.join('\n');
-      currentMeeting.transcriptChunks = timedChunks;
-      currentMeeting.status = i === rows.length - 1 ? 'transcribed' : 'transcribing';
-      await putMeeting(currentMeeting);
-      $('#transcriptContent').textContent = currentMeeting.transcript;
-
-      offsetSec += 30;
-    }
-
-    $('#transcriptStatus').textContent = `Done · ${currentMeeting.transcript.length.toLocaleString()} characters`;
+    currentMeeting.transcript = result.text || '';
+    currentMeeting.transcriptChunks = result.chunks || [];
+    currentMeeting.status = 'transcribed';
+    await putMeeting(currentMeeting);
+    $('#transcriptContent').textContent = currentMeeting.transcript;
+    $('#transcriptStatus').textContent = currentMeeting.transcript
+      ? `Done · ${currentMeeting.transcript.length.toLocaleString()} characters`
+      : 'Done · no clear speech detected.';
   } catch (err) {
     $('#transcriptStatus').textContent = `Transcription failed: ${err.message || err}`;
   } finally { btn.disabled = false; }
