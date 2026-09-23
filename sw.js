@@ -1,4 +1,4 @@
-const CACHE = 'meeting-pocket-shell-v0.3.3';
+const CACHE = 'meeting-pocket-shell-v0.3.3-r1';
 const SHELL = ['./','./index.html','./styles.css','./app.js','./db.js','./ai.js','./manifest.webmanifest','./icons/icon.svg'];
 
 self.addEventListener('install', event => {
