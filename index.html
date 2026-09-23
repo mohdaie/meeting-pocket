@@ -25,9 +25,10 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.3.2</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.3.3</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
+        <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
       </div>
 
       <div class="hud-bottom">
@@ -53,6 +54,7 @@
 
       <div class="center-canvas recording-center-canvas">
         <p class="recording-state"><span class="tiny-dot"></span> Live recording</p>
+        <p id="recordingMic" class="recording-mic">🎤 Detecting microphone…</p>
         <p id="chunkStatus" class="chunk-status">Saving chunks locally</p>
       </div>
 
@@ -128,6 +130,14 @@
     <dialog id="settingsDialog">
       <form method="dialog" class="dialog-card">
         <h2>Settings</h2>
+        <label class="field">
+          <span>Audio input</span>
+          <select id="audioInputSelect">
+            <option value="">Automatic · Android chooses</option>
+          </select>
+          <small id="micHelp" class="field-help">Connect earbuds first, then refresh microphones.</small>
+          <button id="refreshMicsBtn" class="secondary-btn" type="button">Refresh microphones</button>
+        </label>
         <label class="field">
           <span>Speech model</span>
           <select id="speechModelSelect">
