@@ -1,4 +1,4 @@
-import { putMeeting, getMeeting, listMeetings, putChunk, getChunks } from './db.js';
+import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js';
 import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js';
 
 const $ = (s) => document.querySelector(s);
@@ -66,6 +66,9 @@ async function refreshHistory() {
     return;
   }
   for (const m of rows) {
+    const row = document.createElement('div');
+    row.className = 'meeting-row';
+
     const btn = document.createElement('button');
     btn.className = 'meeting-item';
     btn.innerHTML = `<strong>${escapeHtml(m.title || 'Meeting')}</strong><small>${fmtDate(m.startedAt)} · ${fmtDuration(m.durationSec || 0)}${m.transcript ? ' · Transcribed' : ''}</small>`;
@@ -73,7 +76,35 @@ async function refreshHistory() {
       historyDialog.close();
       await openMeeting(m.id);
     };
-    meetingList.appendChild(btn);
+
+    const del = document.createElement('button');
+    del.className = 'meeting-delete';
+    del.type = 'button';
+    del.setAttribute('aria-label', `Permanently delete ${m.title || 'meeting'}`);
+    del.textContent = 'Delete';
+    del.onclick = async (event) => {
+      event.stopPropagation();
+      const ok = confirm('Permanently delete this meeting?\n\nThe audio recording, transcript and summary will be removed from this device. This cannot be undone.');
+      if (!ok) return;
+
+      del.disabled = true;
+      del.textContent = 'Deleting…';
+      try {
+        await deleteMeetingFully(m.id);
+        if (currentMeetingId === m.id) {
+          currentMeetingId = null;
+          currentMeeting = null;
+        }
+        await refreshHistory();
+      } catch (err) {
+        del.disabled = false;
+        del.textContent = 'Delete';
+        alert(`Delete failed: ${err.message || err}`);
+      }
+    };
+
+    row.append(btn, del);
+    meetingList.appendChild(row);
   }
 }
 
