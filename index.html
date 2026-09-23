@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#050505" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>Meeting Pocket</title>
+</head>
+<body>
+  <main id="app">
+    <section id="homeView" class="view active">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LOCAL-FIRST PWA</p>
+          <h1>Meeting Pocket</h1>
+        </div>
+        <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button>
+      </header>
+
+      <p class="tagline">Record. Transcribe. Understand.</p>
+
+      <button id="startBtn" class="record-cta">
+        <span class="mic">●</span>
+        <span>Start Meeting</span>
+      </button>
+
+      <div id="capabilityCard" class="card compact"></div>
+
+      <section class="history-section">
+        <div class="section-title-row">
+          <h2>Recent meetings</h2>
+          <button id="refreshHistoryBtn" class="text-btn">Refresh</button>
+        </div>
+        <div id="meetingList" class="meeting-list"></div>
+      </section>
+    </section>
+
+    <section id="recordView" class="view recording-view" aria-live="polite">
+      <div class="recording-center">
+        <p class="recording-label"><span class="dot"></span> Recording</p>
+        <div id="timer" class="timer">00:00</div>
+        <p id="chunkStatus" class="muted">Saving locally</p>
+      </div>
+      <div class="recording-actions">
+        <button id="dimBtn" class="secondary-btn">Dim more</button>
+        <button id="stopBtn" class="stop-btn">End meeting</button>
+      </div>
+    </section>
+
+    <section id="meetingView" class="view">
+      <header class="topbar">
+        <button id="backBtn" class="icon-btn" aria-label="Back">←</button>
+        <div class="grow">
+          <p class="eyebrow">MEETING</p>
+          <h1 id="meetingTitle">Meeting</h1>
+        </div>
+      </header>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="summary">Summary</button>
+        <button class="tab" data-tab="transcript">Transcript</button>
+        <button class="tab" data-tab="ask">Ask</button>
+      </div>
+
+      <div id="summaryPanel" class="panel active">
+        <div class="card">
+          <div class="section-title-row">
+            <h2>Meeting brief</h2>
+            <button id="summarizeBtn" class="small-btn">Generate</button>
+          </div>
+          <div id="summaryStatus" class="muted">No summary yet.</div>
+          <div id="summaryContent"></div>
+        </div>
+      </div>
+
+      <div id="transcriptPanel" class="panel">
+        <div class="card">
+          <div class="section-title-row">
+            <h2>Transcript</h2>
+            <button id="transcribeBtn" class="small-btn">Transcribe</button>
+          </div>
+          <div id="transcriptStatus" class="muted">No transcript yet.</div>
+          <div id="transcriptContent" class="transcript"></div>
+        </div>
+      </div>
+
+      <div id="askPanel" class="panel">
+        <div class="card">
+          <h2>Ask this meeting</h2>
+          <textarea id="questionInput" rows="3" placeholder="What did they decide about patching?"></textarea>
+          <button id="askBtn" class="primary-btn">Ask locally</button>
+          <div id="answerBox" class="answer-box"></div>
+        </div>
+      </div>
+    </section>
+
+    <dialog id="settingsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2>Settings</h2>
+        <label class="field">
+          <span>Speech model</span>
+          <select id="speechModelSelect">
+            <option value="onnx-community/whisper-base">Whisper Base multilingual</option>
+            <option value="onnx-community/whisper-tiny">Whisper Tiny multilingual (faster)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Summary model</span>
+          <select id="summaryModelSelect">
+            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (multilingual)</option>
+          </select>
+        </label>
+        <label class="switch-row">
+          <input id="keepAwakeToggle" type="checkbox" checked />
+          <span>Keep screen awake while recording</span>
+        </label>
+        <p class="footnote">The app itself makes no sounds or vibrations. It does not hide system microphone/privacy indicators.</p>
+        <button class="primary-btn" value="close">Done</button>
+      </form>
+    </dialog>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
