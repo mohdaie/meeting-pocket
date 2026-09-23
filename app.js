@@ -10,8 +10,10 @@ const meetingView = $('#meetingView');
 const timerEl = $('#timer');
 const chunkStatus = $('#chunkStatus');
 const meetingList = $('#meetingList');
-const capabilityCard = $('#capabilityCard');
+const capabilityPill = $('#capabilityPill');
 const settingsDialog = $('#settingsDialog');
+const historyDialog = $('#historyDialog');
+const idleTimerEl = $('#idleTimer');
 const speechModelSelect = $('#speechModelSelect');
 const summaryModelSelect = $('#summaryModelSelect');
 const keepAwakeToggle = $('#keepAwakeToggle');
@@ -48,9 +50,10 @@ function detectCapabilities() {
   const recorder = 'MediaRecorder' in window;
   const webgpu = 'gpu' in navigator;
   const idb = 'indexedDB' in window;
-  capabilityCard.innerHTML = `
-    <div><span class="${mic && recorder && idb ? 'status-good' : 'status-warn'}">${mic && recorder && idb ? '● Ready to record locally' : '● Browser capability issue'}</span></div>
-    <div style="margin-top:6px">AI acceleration: <strong>${webgpu ? 'WebGPU available' : 'CPU/WASM fallback'}</strong></div>`;
+  const ready = mic && recorder && idb;
+  capabilityPill.textContent = ready
+    ? `Ready to record locally · ${webgpu ? 'WebGPU available' : 'browser AI fallback mode'}`
+    : 'This browser may not support local recording properly.';
 }
 
 async function refreshHistory() {
@@ -64,7 +67,10 @@ async function refreshHistory() {
     const btn = document.createElement('button');
     btn.className = 'meeting-item';
     btn.innerHTML = `<strong>${escapeHtml(m.title || 'Meeting')}</strong><small>${fmtDate(m.startedAt)} · ${fmtDuration(m.durationSec || 0)}${m.transcript ? ' · Transcribed' : ''}</small>`;
-    btn.onclick = () => openMeeting(m.id);
+    btn.onclick = async () => {
+      historyDialog.close();
+      await openMeeting(m.id);
+    };
     meetingList.appendChild(btn);
   }
 }
@@ -138,7 +144,7 @@ async function startRecording() {
   mediaRecorder.start(30000); // 30-second recoverable chunks
   await requestWakeLock();
   showView(recordView);
-  document.body.classList.add('ultra-dim');
+  document.body.classList.remove('ultra-dim');
 
   const tick = () => {
     timerEl.textContent = fmtDuration(Math.floor((Date.now() - startedAt) / 1000));
@@ -170,6 +176,7 @@ async function finishRecording() {
   currentMeeting.durationSec = Math.max(1, Math.floor((endedAt - startedAt) / 1000));
   currentMeeting.status = 'recorded';
   await putMeeting(currentMeeting);
+  idleTimerEl.textContent = '00:00';
   await openMeeting(currentMeeting.id);
 }
 
@@ -184,6 +191,7 @@ async function openMeeting(id) {
   $('#summaryStatus').textContent = meeting.summary ? 'Saved locally.' : 'No summary yet.';
   renderSummary(meeting.summary || '');
   $('#answerBox').textContent = '';
+  $('#questionInput').value = '';
   showView(meetingView);
 }
 
@@ -307,10 +315,13 @@ async function doAsk() {
 
 $('#startBtn').onclick = startRecording;
 $('#stopBtn').onclick = stopRecording;
-$('#dimBtn').onclick = () => document.body.classList.toggle('ultra-dim');
 $('#backBtn').onclick = async () => { showView(homeView); await refreshHistory(); };
-$('#refreshHistoryBtn').onclick = refreshHistory;
+$('#dimBtn').onclick = () => document.body.classList.toggle('ultra-dim');
 $('#settingsBtn').onclick = () => settingsDialog.showModal();
+$('#historyBtn').onclick = async () => {
+  await refreshHistory();
+  historyDialog.showModal();
+};
 $('#transcribeBtn').onclick = doTranscribe;
 $('#summarizeBtn').onclick = doSummarize;
 $('#askBtn').onclick = doAsk;
