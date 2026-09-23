@@ -15,6 +15,7 @@ const settingsDialog = $('#settingsDialog');
 const historyDialog = $('#historyDialog');
 const idleTimerEl = $('#idleTimer');
 const speechModelSelect = $('#speechModelSelect');
+const transcriptLanguageSelect = $('#transcriptLanguageSelect');
 const summaryModelSelect = $('#summaryModelSelect');
 const keepAwakeToggle = $('#keepAwakeToggle');
 
@@ -103,7 +104,15 @@ async function startRecording() {
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: {
+        // Meeting-room capture: preserve natural far-field speech instead of
+        // applying aggressive call-style echo cancellation.
+        echoCancellation: false,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000,
+      },
       video: false,
     });
   } catch (err) {
@@ -133,7 +142,10 @@ async function startRecording() {
   currentMeeting.mimeType = mimeType || 'audio/webm';
   await putMeeting(currentMeeting);
 
-  mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+  const recorderOptions = mimeType
+    ? { mimeType, audioBitsPerSecond: 128000 }
+    : { audioBitsPerSecond: 128000 };
+  mediaRecorder = new MediaRecorder(mediaStream, recorderOptions);
   mediaRecorder.addEventListener('dataavailable', (event) => {
     if (!event.data || !event.data.size) return;
     const idx = chunkIndex++;
@@ -214,6 +226,7 @@ async function doTranscribe() {
 
     const result = await transcribeBlob(completeRecording, {
       model: speechModelSelect.value,
+      language: transcriptLanguageSelect.value,
       onProgress: (s) => $('#transcriptStatus').textContent = s,
     });
 
@@ -223,7 +236,7 @@ async function doTranscribe() {
     await putMeeting(currentMeeting);
     $('#transcriptContent').textContent = currentMeeting.transcript;
     $('#transcriptStatus').textContent = currentMeeting.transcript
-      ? `Done · ${currentMeeting.transcript.length.toLocaleString()} characters`
+      ? `Done · ${currentMeeting.transcript.length.toLocaleString()} characters${result.filteredSegments ? ` · ${result.filteredSegments} unclear segment${result.filteredSegments === 1 ? '' : 's'} filtered` : ''}`
       : 'Done · no clear speech detected.';
   } catch (err) {
     $('#transcriptStatus').textContent = `Transcription failed: ${err.message || err}`;
