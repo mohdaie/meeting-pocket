@@ -19,8 +19,10 @@ const idleTimerEl = $('#idleTimer');
 const audioInputSelect = $('#audioInputSelect');
 const refreshMicsBtn = $('#refreshMicsBtn');
 const micHelp = $('#micHelp');
+const transcriptionEngineSelect = $('#transcriptionEngineSelect');
+const geminiApiKeyInput = $('#geminiApiKeyInput');
+const groqApiKeyInput = $('#groqApiKeyInput');
 const speechModelSelect = $('#speechModelSelect');
-const transcriptLanguageSelect = $('#transcriptLanguageSelect');
 const summaryModelSelect = $('#summaryModelSelect');
 const keepAwakeToggle = $('#keepAwakeToggle');
 
@@ -64,6 +66,29 @@ function detectCapabilities() {
 }
 
 const MIC_STORAGE_KEY = 'meeting-pocket-audio-input';
+const TRANSCRIPTION_ENGINE_KEY = 'meeting-pocket-transcription-engine';
+const GEMINI_KEY_STORAGE = 'meeting-pocket-gemini-api-key';
+const GROQ_KEY_STORAGE = 'meeting-pocket-groq-api-key';
+
+function loadAiSettings() {
+  if (transcriptionEngineSelect) {
+    transcriptionEngineSelect.value = localStorage.getItem(TRANSCRIPTION_ENGINE_KEY) || 'auto';
+  }
+  if (geminiApiKeyInput) geminiApiKeyInput.value = localStorage.getItem(GEMINI_KEY_STORAGE) || '';
+  if (groqApiKeyInput) groqApiKeyInput.value = localStorage.getItem(GROQ_KEY_STORAGE) || '';
+}
+
+function saveAiSetting(key, value) {
+  const clean = (value || '').trim();
+  if (clean) localStorage.setItem(key, clean);
+  else localStorage.removeItem(key);
+}
+
+function transcriptionProviderLabel(result) {
+  if (result?.provider === 'gemini') return 'Gemini 3.5 Transcribe';
+  if (result?.provider === 'groq') return 'Groq Whisper Large V3';
+  return 'Local Whisper';
+}
 
 function selectedMicId() {
   return localStorage.getItem(MIC_STORAGE_KEY) || '';
@@ -359,8 +384,10 @@ async function doTranscribe() {
     const completeRecording = new Blob(rows.map(row => row.blob), { type: mimeType });
 
     const result = await transcribeBlob(completeRecording, {
+      engine: transcriptionEngineSelect?.value || 'auto',
       model: speechModelSelect.value,
-      language: transcriptLanguageSelect.value,
+      geminiApiKey: geminiApiKeyInput?.value.trim() || '',
+      groqApiKey: groqApiKeyInput?.value.trim() || '',
       onProgress: (s) => $('#transcriptStatus').textContent = s,
     });
 
@@ -370,7 +397,7 @@ async function doTranscribe() {
     await putMeeting(currentMeeting);
     $('#transcriptContent').textContent = currentMeeting.transcript;
     $('#transcriptStatus').textContent = currentMeeting.transcript
-      ? `Done · ${currentMeeting.transcript.length.toLocaleString()} characters${result.filteredSegments ? ` · ${result.filteredSegments} unclear segment${result.filteredSegments === 1 ? '' : 's'} filtered` : ''}`
+      ? `Done · ${transcriptionProviderLabel(result)} · ${currentMeeting.transcript.length.toLocaleString()} characters${result.filteredSegments ? ` · ${result.filteredSegments} unclear segment${result.filteredSegments === 1 ? '' : 's'} filtered` : ''}`
       : 'Done · no clear speech detected.';
   } catch (err) {
     $('#transcriptStatus').textContent = `Transcription failed: ${err.message || err}`;
@@ -462,6 +489,12 @@ audioInputSelect.onchange = () => {
   else localStorage.removeItem(MIC_STORAGE_KEY);
   updateSelectedMicUi();
 };
+
+transcriptionEngineSelect.onchange = () => {
+  localStorage.setItem(TRANSCRIPTION_ENGINE_KEY, transcriptionEngineSelect.value || 'auto');
+};
+geminiApiKeyInput.onchange = () => saveAiSetting(GEMINI_KEY_STORAGE, geminiApiKeyInput.value);
+groqApiKeyInput.onchange = () => saveAiSetting(GROQ_KEY_STORAGE, groqApiKeyInput.value);
 $('#historyBtn').onclick = async () => {
   await refreshHistory();
   historyDialog.showModal();
@@ -488,6 +521,7 @@ if (navigator.mediaDevices?.addEventListener) {
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+loadAiSettings();
 detectCapabilities();
 refreshAudioInputs().catch(() => {});
 refreshHistory();
