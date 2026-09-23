@@ -146,16 +146,249 @@ function filterTranscript(result) {
   return { text, chunks: [], filteredSegments: 0 };
 }
 
-export async function transcribeBlob(blob, {
+const GEMINI_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe';
+const GROQ_TRANSCRIBE_MODEL = 'whisper-large-v3';
+const GEMINI_INLINE_LIMIT = 18 * 1024 * 1024;
+const GROQ_FREE_FILE_LIMIT = 25 * 1024 * 1024;
+
+async function responseError(response, label) {
+  let detail = '';
+  try {
+    const payload = await response.clone().json();
+    detail = payload?.error?.message || payload?.message || '';
+  } catch {
+    try { detail = (await response.text()).slice(0, 240); } catch {}
+  }
+  const suffix = detail ? ': ' + detail : '';
+  return new Error(label + ' failed (' + response.status + ')' + suffix);
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const stride = 0x8000;
+  for (let i = 0; i < bytes.length; i += stride) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + stride));
+  }
+  return btoa(binary);
+}
+
+function extractGeminiText(payload) {
+  if (typeof payload?.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  const outputs = Array.isArray(payload?.outputs) ? payload.outputs : [];
+  const outputText = outputs
+    .filter(x => x?.type === 'text' && typeof x.text === 'string')
+    .map(x => x.text)
+    .join('\n')
+    .trim();
+  if (outputText) return outputText;
+
+  const steps = Array.isArray(payload?.steps) ? payload.steps : [];
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const parts = Array.isArray(steps[i]?.content) ? steps[i].content : [];
+    const text = parts
+      .filter(x => x?.type === 'text' && typeof x.text === 'string')
+      .map(x => x.text)
+      .join('\n')
+      .trim();
+    if (text) return text;
+  }
+
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+  return candidates
+    .flatMap(x => x?.content?.parts || [])
+    .map(x => x?.text || '')
+    .join('\n')
+    .trim();
+}
+
+async function geminiInlineInput(blob) {
+  return {
+    type: 'audio',
+    data: arrayBufferToBase64(await blob.arrayBuffer()),
+    mime_type: blob.type || 'audio/webm',
+  };
+}
+
+async function uploadGeminiFile(blob, apiKey, onProgress) {
+  onProgress('Uploading meeting audio to Gemini…');
+  const mimeType = blob.type || 'audio/webm';
+
+  const startResponse = await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files', {
+    method: 'POST',
+    headers: {
+      'x-goog-api-key': apiKey,
+      'X-Goog-Upload-Protocol': 'resumable',
+      'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': String(blob.size),
+      'X-Goog-Upload-Header-Content-Type': mimeType,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file: { display_name: 'meeting-pocket-' + Date.now() },
+    }),
+  });
+  if (!startResponse.ok) throw await responseError(startResponse, 'Gemini upload start');
+
+  const uploadUrl = startResponse.headers.get('x-goog-upload-url');
+  if (!uploadUrl) {
+    throw new Error('Gemini upload URL was not exposed to this browser. Try a shorter recording or Local mode.');
+  }
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+    },
+    body: blob,
+  });
+  if (!uploadResponse.ok) throw await responseError(uploadResponse, 'Gemini audio upload');
+
+  const uploaded = await uploadResponse.json();
+  let file = uploaded?.file || uploaded;
+  const name = file?.name || '';
+
+  for (let i = 0; name && file?.state === 'PROCESSING' && i < 40; i++) {
+    onProgress('Gemini is preparing the recording…');
+    await new Promise(resolve => setTimeout(resolve, 750));
+    const check = await fetch('https://generativelanguage.googleapis.com/v1beta/' + name, {
+      headers: { 'x-goog-api-key': apiKey },
+    });
+    if (!check.ok) throw await responseError(check, 'Gemini file check');
+    file = await check.json();
+  }
+
+  if (file?.state === 'FAILED') throw new Error('Gemini could not process this audio file.');
+  return {
+    input: {
+      type: 'audio',
+      uri: file?.uri,
+      mime_type: file?.mimeType || file?.mime_type || mimeType,
+    },
+    name,
+  };
+}
+
+async function deleteGeminiFile(name, apiKey) {
+  if (!name) return;
+  try {
+    await fetch('https://generativelanguage.googleapis.com/v1beta/' + name, {
+      method: 'DELETE',
+      headers: { 'x-goog-api-key': apiKey },
+    });
+  } catch {}
+}
+
+async function transcribeWithGemini(blob, apiKey, onProgress) {
+  if (!apiKey) throw new Error('Gemini API key is not configured.');
+
+  let remoteName = '';
+  try {
+    let audioInput;
+    if (blob.size <= GEMINI_INLINE_LIMIT) {
+      onProgress('Preparing audio for Gemini multilingual transcription…');
+      audioInput = await geminiInlineInput(blob);
+    } else {
+      const uploaded = await uploadGeminiFile(blob, apiKey, onProgress);
+      audioInput = uploaded.input;
+      remoteName = uploaded.name;
+    }
+
+    onProgress('Transcribing with Gemini 3.5 · auto multilingual…');
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: GEMINI_TRANSCRIBE_MODEL,
+        input: [audioInput],
+        generation_config: {
+          transcription_config: {
+            language_codes: ['en-US', 'ms-MY', 'zh-CN', 'ta-IN'],
+            mode: { type: 'verbatim' },
+          },
+        },
+      }),
+    });
+    if (!response.ok) throw await responseError(response, 'Gemini transcription');
+
+    const payload = await response.json();
+    const text = cleanChunkText(extractGeminiText(payload));
+    if (!text) throw new Error('Gemini returned an empty transcript.');
+
+    return {
+      text,
+      chunks: [],
+      filteredSegments: 0,
+      provider: 'gemini',
+      model: GEMINI_TRANSCRIBE_MODEL,
+    };
+  } finally {
+    await deleteGeminiFile(remoteName, apiKey);
+  }
+}
+
+function extensionForMime(mimeType) {
+  if ((mimeType || '').includes('mp4')) return 'm4a';
+  if ((mimeType || '').includes('ogg')) return 'ogg';
+  if ((mimeType || '').includes('wav')) return 'wav';
+  return 'webm';
+}
+
+async function transcribeWithGroq(blob, apiKey, onProgress) {
+  if (!apiKey) throw new Error('Groq API key is not configured.');
+  if (blob.size > GROQ_FREE_FILE_LIMIT) {
+    throw new Error('Recording is over Groq free-tier 25 MB upload limit.');
+  }
+
+  onProgress('Transcribing with Groq Whisper Large V3…');
+  const form = new FormData();
+  form.append('file', blob, 'meeting-pocket.' + extensionForMime(blob.type));
+  form.append('model', GROQ_TRANSCRIBE_MODEL);
+  form.append('response_format', 'verbose_json');
+  form.append('temperature', '0');
+  form.append('timestamp_granularities[]', 'segment');
+
+  const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + apiKey },
+    body: form,
+  });
+  if (!response.ok) throw await responseError(response, 'Groq transcription');
+
+  const payload = await response.json();
+  const result = {
+    text: payload?.text || '',
+    chunks: Array.isArray(payload?.segments)
+      ? payload.segments.map(s => ({
+          text: s.text || '',
+          timestamp: [s.start ?? null, s.end ?? null],
+        }))
+      : [],
+  };
+  const filtered = filterTranscript(result);
+  return {
+    ...filtered,
+    provider: 'groq',
+    model: GROQ_TRANSCRIBE_MODEL,
+  };
+}
+
+async function transcribeLocally(blob, {
   model = 'onnx-community/whisper-small',
-  language = 'auto',
   onProgress = () => {},
 } = {}) {
   const { pipeline } = await lib();
   const device = aiDevice();
-  const key = `${model}:${device}`;
+  const key = model + ':' + device;
   if (!transcriber || transcriberKey !== key) {
-    onProgress(`Loading ${model.split('/').pop()}…`);
+    onProgress('Loading ' + model.split('/').pop() + '…');
     transcriber = await pipeline('automatic-speech-recognition', model, {
       device,
       dtype: device === 'webgpu' ? {
@@ -164,7 +397,7 @@ export async function transcribeBlob(blob, {
       } : 'q8',
       progress_callback: (p) => {
         if (p?.status === 'progress' && Number.isFinite(p.progress)) {
-          onProgress(`Downloading speech AI ${Math.round(p.progress)}%`);
+          onProgress('Downloading speech AI ' + Math.round(p.progress) + '%');
         }
       },
     });
@@ -175,21 +408,76 @@ export async function transcribeBlob(blob, {
   const decoded = await blobToMono16k(blob);
   const prepared = prepareMeetingAudio(decoded);
   if (prepared.silent) {
-    return { text: '', chunks: [], filteredSegments: 0 };
+    return { text: '', chunks: [], filteredSegments: 0, provider: 'local', model };
   }
 
-  onProgress('Transcribing locally…');
-  const options = {
+  onProgress('Transcribing locally with multilingual Whisper…');
+  const result = await transcriber(prepared.audio, {
     chunk_length_s: 28,
     stride_length_s: 4,
     return_timestamps: true,
     task: 'transcribe',
-  };
-  if (language && language !== 'auto') options.language = language;
-
-  const result = await transcriber(prepared.audio, options);
+  });
   onProgress('Cleaning transcript…');
-  return filterTranscript(result);
+  return {
+    ...filterTranscript(result),
+    provider: 'local',
+    model,
+  };
+}
+
+export async function transcribeBlob(blob, {
+  model = 'onnx-community/whisper-small',
+  engine = 'auto',
+  geminiApiKey = '',
+  groqApiKey = '',
+  onProgress = () => {},
+} = {}) {
+  const attempts = [];
+
+  const run = async (label, fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      attempts.push(label + ': ' + (err?.message || err));
+      return null;
+    }
+  };
+
+  if (engine === 'gemini') {
+    const result = await run('Gemini', () => transcribeWithGemini(blob, geminiApiKey, onProgress));
+    if (result) return result;
+    throw new Error(attempts.join(' | '));
+  }
+
+  if (engine === 'groq') {
+    const result = await run('Groq', () => transcribeWithGroq(blob, groqApiKey, onProgress));
+    if (result) return result;
+    throw new Error(attempts.join(' | '));
+  }
+
+  if (engine === 'local') {
+    return transcribeLocally(blob, { model, onProgress });
+  }
+
+  if (geminiApiKey) {
+    const result = await run('Gemini', () => transcribeWithGemini(blob, geminiApiKey, onProgress));
+    if (result) return result;
+    onProgress('Gemini unavailable · trying fallback…');
+  }
+
+  if (groqApiKey) {
+    const result = await run('Groq', () => transcribeWithGroq(blob, groqApiKey, onProgress));
+    if (result) return result;
+    onProgress('Groq unavailable · using local fallback…');
+  }
+
+  try {
+    return await transcribeLocally(blob, { model, onProgress });
+  } catch (err) {
+    attempts.push('Local Whisper: ' + (err?.message || err));
+    throw new Error(attempts.join(' | '));
+  }
 }
 
 async function getGenerator(model, onProgress) {
