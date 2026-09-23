@@ -60,8 +60,13 @@ function detectCapabilities() {
   const webgpu = 'gpu' in navigator;
   const idb = 'indexedDB' in window;
   const ready = mic && recorder && idb;
+  const aiStatus = localStorage.getItem(GEMINI_KEY_STORAGE)
+    ? 'Gemini multilingual ready'
+    : localStorage.getItem(GROQ_KEY_STORAGE)
+      ? 'Groq multilingual ready'
+      : (webgpu ? 'local Whisper fallback ready' : 'local browser fallback mode');
   capabilityPill.textContent = ready
-    ? `Ready to record locally · ${webgpu ? 'WebGPU available' : 'browser AI fallback mode'}`
+    ? `Ready to record · ${aiStatus}`
     : 'This browser may not support local recording properly.';
 }
 
@@ -492,9 +497,16 @@ audioInputSelect.onchange = () => {
 
 transcriptionEngineSelect.onchange = () => {
   localStorage.setItem(TRANSCRIPTION_ENGINE_KEY, transcriptionEngineSelect.value || 'auto');
+  detectCapabilities();
 };
-geminiApiKeyInput.onchange = () => saveAiSetting(GEMINI_KEY_STORAGE, geminiApiKeyInput.value);
-groqApiKeyInput.onchange = () => saveAiSetting(GROQ_KEY_STORAGE, groqApiKeyInput.value);
+geminiApiKeyInput.onchange = () => {
+  saveAiSetting(GEMINI_KEY_STORAGE, geminiApiKeyInput.value);
+  detectCapabilities();
+};
+groqApiKeyInput.onchange = () => {
+  saveAiSetting(GROQ_KEY_STORAGE, groqApiKeyInput.value);
+  detectCapabilities();
+};
 $('#historyBtn').onclick = async () => {
   await refreshHistory();
   historyDialog.showModal();
