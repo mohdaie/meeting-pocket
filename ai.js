@@ -158,7 +158,7 @@ function filterTranscript(result) {
 }
 
 const GEMINI_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe';
-const GROQ_TRANSCRIBE_MODEL = 'whisper-large-v3';
+const GROQ_TRANSCRIBE_MODEL = 'whisper-large-v3-turbo';
 const GEMINI_INLINE_LIMIT = 18 * 1024 * 1024;
 const GROQ_FREE_FILE_LIMIT = 25 * 1024 * 1024;
 
@@ -471,16 +471,18 @@ export async function transcribeBlob(blob, {
     return transcribeLocally(blob, { model, onProgress });
   }
 
-  if (geminiApiKey) {
-    const result = await run('Gemini', () => transcribeWithGemini(blob, geminiApiKey, onProgress));
-    if (result) return result;
-    onProgress('Gemini unavailable · trying fallback…');
-  }
-
+  // Prefer Groq in Auto mode. It is fast, multilingual, and avoids loading
+  // heavyweight browser AI on mobile. Gemini remains a cloud fallback.
   if (groqApiKey) {
     const result = await run('Groq', () => transcribeWithGroq(blob, groqApiKey, onProgress));
     if (result) return result;
-    onProgress('Groq unavailable · using local fallback…');
+    onProgress('Groq unavailable · trying Gemini fallback…');
+  }
+
+  if (geminiApiKey) {
+    const result = await run('Gemini', () => transcribeWithGemini(blob, geminiApiKey, onProgress));
+    if (result) return result;
+    onProgress('Gemini unavailable · using local fallback…');
   }
 
   try {
@@ -522,6 +524,41 @@ async function generateWithGemini(prompt, apiKey, onProgress, label = 'Gemini') 
     .join('\n')
     .trim();
 
+  if (!text) throw new Error(label + ' returned an empty response.');
+  return text;
+}
+
+const GROQ_SUMMARY_MODEL = 'qwen/qwen3.8-27b';
+
+async function generateWithGroq(prompt, apiKey, onProgress, label = 'Groq Qwen 3.8 27B') {
+  if (!apiKey) throw new Error('Groq API key is not configured.');
+  onProgress(label + '…');
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: GROQ_SUMMARY_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are Meeting Pocket, a factual multilingual meeting-notes assistant. Never invent facts, owners, dates, or decisions.'
+        },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.2,
+      reasoning_effort: 'none',
+      reasoning_format: 'hidden',
+      max_completion_tokens: 1800,
+    }),
+  });
+
+  if (!response.ok) throw await responseError(response, label);
+  const payload = await response.json();
+  const text = payload?.choices?.[0]?.message?.content?.trim() || '';
   if (!text) throw new Error(label + ' returned an empty response.');
   return text;
 }
@@ -596,9 +633,10 @@ export async function summarizeTranscript(text, {
   engine = 'auto',
   model = 'onnx-community/Qwen2.5-0.5B-Instruct',
   geminiApiKey = '',
+  groqApiKey = '',
   onProgress = () => {},
 } = {}) {
-  const geminiPrompt = `You are Meeting Pocket, a multilingual meeting-notes assistant.
+  const prompt = `You are Meeting Pocket, a multilingual meeting-notes assistant.
 Use only the transcript below. The transcript may mix English, Malay, Mandarin, Tamil or other languages.
 Preserve names, dates, numbers, decisions, action owners, deadlines and unresolved questions.
 Do not invent missing information. Treat [unclear audio] as missing information.
@@ -614,8 +652,13 @@ OPEN QUESTIONS
 Transcript:
 ${text}`;
 
+  if (engine === 'groq') {
+    const result = await generateWithGroq(prompt, groqApiKey, onProgress, 'Generating summary with Groq Qwen 3.8 27B');
+    return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL };
+  }
+
   if (engine === 'gemini') {
-    const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
+    const result = await generateWithGemini(prompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
     return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
   }
 
@@ -625,27 +668,37 @@ ${text}`;
     return { text: result, provider: 'local', model };
   }
 
+  const attempts = [];
+
+  // Groq is now the primary cloud engine for Meeting Pocket.
+  if (groqApiKey) {
+    try {
+      const result = await generateWithGroq(prompt, groqApiKey, onProgress, 'Generating summary with Groq Qwen 3.8 27B');
+      return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL };
+    } catch (err) {
+      attempts.push('Groq: ' + (err?.message || err));
+      onProgress(geminiApiKey ? 'Groq unavailable · trying Gemini…' : 'Groq unavailable…');
+    }
+  }
+
   if (geminiApiKey) {
     try {
-      const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
+      const result = await generateWithGemini(prompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
       return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
     } catch (err) {
-      if (isMobileDevice()) {
-        throw new Error(
-          'Gemini summary failed: ' + (err?.message || err) +
-          '. Local Qwen fallback was not started because it can crash mobile browsers.'
-        );
-      }
-      onProgress('Gemini summary unavailable · using local Qwen fallback…');
+      attempts.push('Gemini: ' + (err?.message || err));
+      onProgress('Cloud summary unavailable…');
     }
   }
 
   if (isMobileDevice()) {
+    const detail = attempts.length ? ' ' + attempts.join(' | ') : '';
     throw new Error(
-      'Add a Gemini API key in Settings to summarize on mobile. Local Qwen fallback is disabled on mobile to prevent browser crashes.'
+      'Summary needs a working Groq or Gemini API key on mobile. Local Qwen is disabled to prevent browser crashes.' + detail
     );
   }
 
+  onProgress('Cloud AI unavailable · using local Qwen fallback…');
   const result = await summarizeLocally(text, model, onProgress);
   return { text: result, provider: 'local', model };
 }
@@ -677,9 +730,10 @@ export async function askMeeting(question, transcript, {
   engine = 'auto',
   model = 'onnx-community/Qwen2.5-0.5B-Instruct',
   geminiApiKey = '',
+  groqApiKey = '',
   onProgress = () => {},
 } = {}) {
-  const geminiPrompt = `Answer the question using only the meeting transcript below.
+  const prompt = `Answer the question using only the meeting transcript below.
 The meeting may contain multiple languages. Preserve the meaning of multilingual/code-switched statements.
 If the answer is not supported by the transcript, say it was not clearly mentioned.
 Be concise and factual.
@@ -690,8 +744,13 @@ ${question}
 Transcript:
 ${transcript}`;
 
+  if (engine === 'groq') {
+    const result = await generateWithGroq(prompt, groqApiKey, onProgress, 'Asking Groq Qwen 3.8 27B');
+    return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL };
+  }
+
   if (engine === 'gemini') {
-    const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
+    const result = await generateWithGemini(prompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
     return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
   }
 
@@ -701,27 +760,36 @@ ${transcript}`;
     return { text: result, provider: 'local', model };
   }
 
+  const attempts = [];
+
+  if (groqApiKey) {
+    try {
+      const result = await generateWithGroq(prompt, groqApiKey, onProgress, 'Asking Groq Qwen 3.8 27B');
+      return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL };
+    } catch (err) {
+      attempts.push('Groq: ' + (err?.message || err));
+      onProgress(geminiApiKey ? 'Groq unavailable · trying Gemini…' : 'Groq unavailable…');
+    }
+  }
+
   if (geminiApiKey) {
     try {
-      const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
+      const result = await generateWithGemini(prompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
       return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
     } catch (err) {
-      if (isMobileDevice()) {
-        throw new Error(
-          'Gemini Ask failed: ' + (err?.message || err) +
-          '. Local Qwen fallback was not started because it can crash mobile browsers.'
-        );
-      }
-      onProgress('Gemini Ask unavailable · using local Qwen fallback…');
+      attempts.push('Gemini: ' + (err?.message || err));
+      onProgress('Cloud Ask unavailable…');
     }
   }
 
   if (isMobileDevice()) {
+    const detail = attempts.length ? ' ' + attempts.join(' | ') : '';
     throw new Error(
-      'Add a Gemini API key in Settings to use Ask on mobile. Local Qwen fallback is disabled on mobile to prevent browser crashes.'
+      'Ask needs a working Groq or Gemini API key on mobile. Local Qwen is disabled to prevent browser crashes.' + detail
     );
   }
 
+  onProgress('Cloud AI unavailable · using local Qwen fallback…');
   const result = await askLocally(question, transcript, model, onProgress);
   return { text: result, provider: 'local', model };
 }
