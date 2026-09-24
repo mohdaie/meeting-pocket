@@ -14,6 +14,17 @@ function aiDevice() {
   return 'gpu' in navigator ? 'webgpu' : 'wasm';
 }
 
+function isMobileDevice() {
+  return navigator.userAgentData?.mobile === true
+    || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+}
+
+function mobileLocalModelError(feature = 'Local AI') {
+  return new Error(
+    feature + ' is disabled on phones/tablets because loading Qwen in the browser can exceed renderer memory and crash the page. Use Gemini 3.8 Flash instead.'
+  );
+}
+
 async function blobToMono16k(blob) {
   const ctx = new AudioContext();
   try {
@@ -609,6 +620,7 @@ ${text}`;
   }
 
   if (engine === 'local') {
+    if (isMobileDevice()) throw mobileLocalModelError('Local Qwen summary');
     const result = await summarizeLocally(text, model, onProgress);
     return { text: result, provider: 'local', model };
   }
@@ -618,8 +630,20 @@ ${text}`;
       const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
       return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
     } catch (err) {
+      if (isMobileDevice()) {
+        throw new Error(
+          'Gemini summary failed: ' + (err?.message || err) +
+          '. Local Qwen fallback was not started because it can crash mobile browsers.'
+        );
+      }
       onProgress('Gemini summary unavailable · using local Qwen fallback…');
     }
+  }
+
+  if (isMobileDevice()) {
+    throw new Error(
+      'Add a Gemini API key in Settings to summarize on mobile. Local Qwen fallback is disabled on mobile to prevent browser crashes.'
+    );
   }
 
   const result = await summarizeLocally(text, model, onProgress);
@@ -672,6 +696,7 @@ ${transcript}`;
   }
 
   if (engine === 'local') {
+    if (isMobileDevice()) throw mobileLocalModelError('Local Qwen Ask');
     const result = await askLocally(question, transcript, model, onProgress);
     return { text: result, provider: 'local', model };
   }
@@ -681,8 +706,20 @@ ${transcript}`;
       const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
       return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
     } catch (err) {
+      if (isMobileDevice()) {
+        throw new Error(
+          'Gemini Ask failed: ' + (err?.message || err) +
+          '. Local Qwen fallback was not started because it can crash mobile browsers.'
+        );
+      }
       onProgress('Gemini Ask unavailable · using local Qwen fallback…');
     }
+  }
+
+  if (isMobileDevice()) {
+    throw new Error(
+      'Add a Gemini API key in Settings to use Ask on mobile. Local Qwen fallback is disabled on mobile to prevent browser crashes.'
+    );
   }
 
   const result = await askLocally(question, transcript, model, onProgress);
