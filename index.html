@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon.svg" />
-  <link rel="stylesheet" href="./styles.css?v=0.5.0" />
+  <link rel="stylesheet" href="./styles.css?v=0.5.1" />
   <title>Meeting Pocket</title>
 </head>
 <body>
@@ -27,7 +27,7 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.5.0</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.5.1</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
         <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
@@ -114,6 +114,7 @@
           <h2>Ask this meeting</h2>
           <textarea id="questionInput" rows="3" placeholder="What did they decide?"></textarea>
           <button id="askBtn" class="primary-btn">Ask</button>
+          <div id="answerMeta" class="answer-meta"></div>
           <div id="answerBox" class="answer-box"></div>
         </div>
       </div>
@@ -211,6 +212,6 @@
     </dialog>
   </main>
 
-  <script type="module" src="./app.js?v=0.5.0"></script>
+  <script type="module" src="./app.js?v=0.5.1"></script>
 </body>
 </html>
