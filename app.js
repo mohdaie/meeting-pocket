@@ -25,6 +25,7 @@ const groqApiKeyInput = $('#groqApiKeyInput');
 const speechModelSelect = $('#speechModelSelect');
 const summaryModelSelect = $('#summaryModelSelect');
 const keepAwakeToggle = $('#keepAwakeToggle');
+const globalDimBtn = $('#globalDimBtn');
 
 let mediaRecorder = null;
 let mediaStream = null;
@@ -36,6 +37,20 @@ let chunkIndex = 0;
 let wakeLock = null;
 let stopping = false;
 let pendingChunkSaves = [];
+
+function setDimmed(dimmed) {
+  document.body.classList.toggle('ultra-dim', !!dimmed);
+  if (globalDimBtn) {
+    globalDimBtn.setAttribute('aria-pressed', dimmed ? 'true' : 'false');
+    globalDimBtn.setAttribute('aria-label', dimmed ? 'Brighten screen' : 'Dim screen');
+    globalDimBtn.title = dimmed ? 'Brighten screen' : 'Dim screen';
+    globalDimBtn.textContent = dimmed ? '◑' : '◐';
+  }
+}
+
+function toggleDimmed() {
+  setDimmed(!document.body.classList.contains('ultra-dim'));
+}
 
 function showView(view) {
   [homeView, recordView, meetingView].forEach(v => v.classList.remove('active'));
@@ -323,7 +338,7 @@ async function startRecording() {
   mediaRecorder.start(30000); // 30-second recoverable chunks
   await requestWakeLock();
   showView(recordView);
-  document.body.classList.remove('ultra-dim');
+  setDimmed(true);
 
   const tick = () => {
     timerEl.textContent = fmtDuration(Math.floor((Date.now() - startedAt) / 1000));
@@ -347,7 +362,7 @@ async function finishRecording() {
   mediaStream?.getTracks().forEach(t => t.stop());
   mediaStream = null;
   await Promise.allSettled(pendingChunkSaves);
-  document.body.classList.remove('ultra-dim');
+  setDimmed(false);
   $('#stopBtn').disabled = false;
 
   const endedAt = Date.now();
@@ -482,7 +497,7 @@ async function doAsk() {
 $('#startBtn').onclick = startRecording;
 $('#stopBtn').onclick = stopRecording;
 $('#backBtn').onclick = async () => { showView(homeView); await refreshHistory(); };
-$('#dimBtn').onclick = () => document.body.classList.toggle('ultra-dim');
+globalDimBtn.onclick = toggleDimmed;
 $('#settingsBtn').onclick = async () => {
   await refreshAudioInputs();
   settingsDialog.showModal();
