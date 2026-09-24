@@ -1,7 +1,8 @@
-import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js?v=0.4.8';
-import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js?v=0.4.8';
+import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js?v=0.5.0';
+import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js?v=0.5.0';
+import { getGroqUsageSnapshot, clearGroqUsage, GROQ_FREE_REFERENCE } from './groq-usage.js?v=0.5.0';
 
-const APP_VERSION = '0.4.8';
+const APP_VERSION = '0.5.0';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -29,6 +30,10 @@ const summaryEngineSelect = $('#summaryEngineSelect');
 const summaryModelSelect = $('#summaryModelSelect');
 const keepAwakeToggle = $('#keepAwakeToggle');
 const globalDimBtn = $('#globalDimBtn');
+const groqUsageBtn = $('#groqUsageBtn');
+const groqUsageDialog = $('#groqUsageDialog');
+const groqUsageContent = $('#groqUsageContent');
+const clearGroqUsageBtn = $('#clearGroqUsageBtn');
 
 let mediaRecorder = null;
 let mediaStream = null;
@@ -119,6 +124,122 @@ function summaryProviderLabel(result) {
   if (result?.provider === 'groq') return 'Groq Qwen 3.8 27B';
   if (result?.provider === 'gemini') return 'Gemini 3.8 Flash';
   return 'Local Qwen';
+}
+
+function pct(used, limit) {
+  if (!limit) return 0;
+  return Math.max(0, Math.min(100, (used / limit) * 100));
+}
+
+function fmtCount(value) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(Number(value || 0));
+}
+
+function fmtSecs(value) {
+  const sec = Math.max(0, Math.round(Number(value || 0)));
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function fmtLatency(ms) {
+  const n = Number(ms || 0);
+  if (!n) return '—';
+  return n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${Math.round(n)}ms`;
+}
+
+function quotaRow(label, used, limit, unit = '') {
+  const value = pct(used, limit);
+  return `
+    <div class="quota-row">
+      <div class="quota-head"><span>${label}</span><strong>${fmtCount(used)} / ${fmtCount(limit)}${unit}</strong></div>
+      <div class="usage-bar"><span style="width:${value.toFixed(1)}%"></span></div>
+      <small>${(100 - value).toFixed(1)}% remaining</small>
+    </div>`;
+}
+
+function liveRateBlock(latest, fallbackLimit) {
+  const rate = latest?.rate || {};
+  const limit = Number(rate.limitRequests || fallbackLimit || 0);
+  const remaining = Number(rate.remainingRequests);
+  if (Number.isFinite(remaining) && limit > 0) {
+    const used = Math.max(0, limit - remaining);
+    return quotaRow('Live request quota from Groq', used, limit);
+  }
+  return '<div class="usage-note">Groq did not expose quota headers to this browser yet. The counters below still update after every Meeting Pocket request.</div>';
+}
+
+function renderGroqUsage() {
+  if (!groqUsageContent) return;
+  const snap = getGroqUsageSnapshot();
+  const qLimit = GROQ_FREE_REFERENCE['qwen/qwen3.8-27b'];
+  const wLimit = GROQ_FREE_REFERENCE['whisper-large-v3-turbo'];
+  const latest = snap.latest;
+  const latestStatus = latest
+    ? (latest.ok ? `HTTP ${latest.status || 200} · OK` : `HTTP ${latest.status || 'error'} · Failed`)
+    : 'No Groq requests recorded yet';
+  const latestModel = latest?.model === 'qwen/qwen3.8-27b'
+    ? 'Qwen 3.8 27B'
+    : latest?.model === 'whisper-large-v3-turbo'
+      ? 'Whisper Large V3 Turbo'
+      : '—';
+  const recent = [...snap.events].reverse().slice(0, 8);
+
+  groqUsageContent.innerHTML = `
+    <div class="usage-live-row">
+      <div><span class="live-dot"></span><strong>Live · this device</strong></div>
+      <small>${escapeHtml(snap.day)}</small>
+    </div>
+
+    <div class="usage-grid">
+      <div class="usage-stat"><span>Requests today</span><strong>${fmtCount(snap.totalRequests)}</strong><small>${fmtCount(snap.successRequests)} successful · ${fmtCount(snap.failedRequests)} failed</small></div>
+      <div class="usage-stat"><span>Qwen tokens</span><strong>${fmtCount(snap.qwen.totalTokens)}</strong><small>${fmtCount(snap.qwen.inputTokens)} in · ${fmtCount(snap.qwen.outputTokens)} out</small></div>
+      <div class="usage-stat"><span>Whisper audio</span><strong>${fmtSecs(snap.whisper.audioSeconds)}</strong><small>${fmtCount(snap.whisper.requests)} transcription request${snap.whisper.requests === 1 ? '' : 's'}</small></div>
+      <div class="usage-stat"><span>Last latency</span><strong>${fmtLatency(latest?.latencyMs)}</strong><small>${escapeHtml(latestModel)}</small></div>
+    </div>
+
+    <section class="usage-section">
+      <h3>Live Groq quota</h3>
+      ${liveRateBlock(snap.qwen.latest || snap.whisper.latest, snap.qwen.latest ? qLimit.rpd : wLimit.rpd)}
+      ${snap.qwen.latest?.rate?.limitTokens
+        ? quotaRow('Qwen tokens / minute', Math.max(0, Number(snap.qwen.latest.rate.limitTokens) - Number(snap.qwen.latest.rate.remainingTokens || 0)), Number(snap.qwen.latest.rate.limitTokens))
+        : ''}
+    </section>
+
+    <section class="usage-section">
+      <div class="usage-title-row"><h3>Free-tier reference</h3><small>Model limits</small></div>
+      ${quotaRow('Qwen requests / day', snap.qwen.requests, qLimit.rpd)}
+      ${quotaRow('Qwen tokens / day', snap.qwen.totalTokens, qLimit.tpd)}
+      ${quotaRow('Whisper requests / day', snap.whisper.requests, wLimit.rpd)}
+      ${quotaRow('Whisper audio / day', Math.round(snap.whisper.audioSeconds), wLimit.asd, ' sec')}
+      <p class="usage-note">Reference limits are Groq's published free-tier values. Your actual account/project limit can differ; live response headers above take priority when available.</p>
+    </section>
+
+    <section class="usage-section">
+      <div class="usage-title-row"><h3>Last request</h3><small>${latest ? new Date(latest.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—'}</small></div>
+      <div class="usage-last">
+        <strong>${escapeHtml(latest?.kind || 'No activity')}</strong>
+        <span>${escapeHtml(latestStatus)}</span>
+        ${latest?.rate?.resetRequests ? `<small>Request quota resets in ${escapeHtml(latest.rate.resetRequests)}</small>` : ''}
+        ${latest?.error ? `<small class="usage-error">${escapeHtml(latest.error)}</small>` : ''}
+      </div>
+    </section>
+
+    <section class="usage-section">
+      <div class="usage-title-row"><h3>Recent calls</h3><small>Latest 8</small></div>
+      <div class="usage-events">
+        ${recent.length ? recent.map(x => `
+          <div class="usage-event">
+            <span class="usage-event-state ${x.ok ? 'ok' : 'bad'}"></span>
+            <div><strong>${escapeHtml(x.kind)}</strong><small>${escapeHtml(x.model.replace('qwen/qwen3.8-27b','Qwen 3.8 27B').replace('whisper-large-v3-turbo','Whisper V3 Turbo'))}</small></div>
+            <div class="usage-event-right"><strong>${fmtLatency(x.latencyMs)}</strong><small>${new Date(x.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</small></div>
+          </div>`).join('') : '<div class="empty">Use Groq once and activity will appear here.</div>'}
+      </div>
+    </section>
+  `;
 }
 
 function selectedMicId() {
@@ -543,6 +664,22 @@ groqApiKeyInput.onchange = () => {
 summaryEngineSelect.onchange = () => {
   localStorage.setItem(SUMMARY_ENGINE_KEY, summaryEngineSelect.value || 'auto');
 };
+
+if (groqUsageBtn && groqUsageDialog) {
+  groqUsageBtn.onclick = () => {
+    renderGroqUsage();
+    settingsDialog.close();
+    groqUsageDialog.showModal();
+  };
+}
+if (clearGroqUsageBtn) {
+  clearGroqUsageBtn.onclick = () => {
+    if (!confirm('Clear Meeting Pocket Groq usage history on this device?')) return;
+    clearGroqUsage();
+    renderGroqUsage();
+  };
+}
+window.addEventListener('meeting-pocket-groq-usage', renderGroqUsage);
 $('#historyBtn').onclick = async () => {
   await refreshHistory();
   historyDialog.showModal();
