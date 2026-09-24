@@ -1,9 +1,9 @@
-const CACHE = 'meeting-pocket-shell-v0.4.1-r1';
+const CACHE = 'meeting-pocket-shell-v0.4.2-r1';
 const SHELL = [
   './',
   './index.html',
-  './styles.css?v=0.4.1',
-  './app.js?v=0.4.1',
+  './styles.css?v=0.4.2',
+  './app.js?v=0.4.2',
   './db.js',
   './ai.js',
   './manifest.webmanifest',
