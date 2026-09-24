@@ -480,6 +480,41 @@ export async function transcribeBlob(blob, {
   }
 }
 
+const GEMINI_SUMMARY_MODEL = 'gemini-3.8-flash';
+
+async function generateWithGemini(prompt, apiKey, onProgress, label = 'Gemini') {
+  if (!apiKey) throw new Error('Gemini API key is not configured.');
+  onProgress(label + '…');
+
+  const response = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_SUMMARY_MODEL + ':generateContent',
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          thinkingConfig: { thinkingLevel: 'low' },
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) throw await responseError(response, label);
+  const payload = await response.json();
+  const text = (payload?.candidates || [])
+    .flatMap(candidate => candidate?.content?.parts || [])
+    .map(part => part?.text || '')
+    .join('\n')
+    .trim();
+
+  if (!text) throw new Error(label + ' returned an empty response.');
+  return text;
+}
+
 async function getGenerator(model, onProgress) {
   const { pipeline } = await lib();
   const device = aiDevice();
@@ -527,14 +562,11 @@ async function generateText(messages, model, onProgress, maxNewTokens = 380) {
   return '';
 }
 
-export async function summarizeTranscript(text, {
-  model = 'onnx-community/Qwen2.5-0.5B-Instruct',
-  onProgress = () => {},
-} = {}) {
+async function summarizeLocally(text, model, onProgress) {
   const parts = splitTranscript(text);
   const mini = [];
   for (let i = 0; i < parts.length; i++) {
-    onProgress(`Analysing part ${i + 1}/${parts.length}…`);
+    onProgress(`Analysing part ${i + 1}/${parts.length} locally…`);
     const response = await generateText([
       { role: 'system', content: 'You extract facts from meeting transcripts. Treat [unclear audio] as missing information. Do not invent facts. Keep names, dates, numbers, decisions, actions and unresolved questions.' },
       { role: 'user', content: `Summarize this transcript chunk in concise bullet points. Preserve important details.\n\n${parts[i]}` },
@@ -542,29 +574,117 @@ export async function summarizeTranscript(text, {
     mini.push(response);
   }
 
-  onProgress('Building meeting brief…');
+  onProgress('Building meeting brief locally…');
   return await generateText([
     { role: 'system', content: 'You are a meeting-notes assistant. Use only the supplied notes. Treat [unclear audio] as missing information. If something is uncertain, say it is unclear. Never invent owners or deadlines.' },
     { role: 'user', content: `Create a concise meeting brief from these chunk notes. Use exactly these headings:\nOVERVIEW\nDECISIONS\nACTION ITEMS\nDATES & NUMBERS\nRISKS / CONCERNS\nOPEN QUESTIONS\n\nChunk notes:\n${mini.join('\n\n---\n\n')}` },
   ], model, onProgress, 500);
 }
 
-export async function askMeeting(question, transcript, {
+export async function summarizeTranscript(text, {
+  engine = 'auto',
   model = 'onnx-community/Qwen2.5-0.5B-Instruct',
+  geminiApiKey = '',
   onProgress = () => {},
 } = {}) {
+  const geminiPrompt = `You are Meeting Pocket, a multilingual meeting-notes assistant.
+Use only the transcript below. The transcript may mix English, Malay, Mandarin, Tamil or other languages.
+Preserve names, dates, numbers, decisions, action owners, deadlines and unresolved questions.
+Do not invent missing information. Treat [unclear audio] as missing information.
+Return plain text using exactly these headings:
+
+OVERVIEW
+DECISIONS
+ACTION ITEMS
+DATES & NUMBERS
+RISKS / CONCERNS
+OPEN QUESTIONS
+
+Transcript:
+${text}`;
+
+  if (engine === 'gemini') {
+    const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
+    return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
+  }
+
+  if (engine === 'local') {
+    const result = await summarizeLocally(text, model, onProgress);
+    return { text: result, provider: 'local', model };
+  }
+
+  if (geminiApiKey) {
+    try {
+      const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Generating summary with Gemini 3.8 Flash');
+      return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
+    } catch (err) {
+      onProgress('Gemini summary unavailable · using local Qwen fallback…');
+    }
+  }
+
+  const result = await summarizeLocally(text, model, onProgress);
+  return { text: result, provider: 'local', model };
+}
+
+function selectRelevantTranscript(question, transcript) {
   const terms = question.toLowerCase().split(/\W+/).filter(x => x.length > 3);
   const paras = transcript.split(/\n+/).filter(Boolean);
   const scored = paras.map((p, idx) => ({
     p, idx,
     score: terms.reduce((n,t) => n + (p.toLowerCase().includes(t) ? 2 : 0), 0),
   })).sort((a,b) => b.score - a.score || a.idx - b.idx);
-  const selected = (scored.some(x => x.score > 0) ? scored.slice(0,12) : scored.slice(0,8))
-    .sort((a,b) => a.idx - b.idx).map(x => x.p).join('\n');
 
-  onProgress('Reading relevant transcript…');
+  return (scored.some(x => x.score > 0) ? scored.slice(0,12) : scored.slice(0,8))
+    .sort((a,b) => a.idx - b.idx)
+    .map(x => x.p)
+    .join('\n');
+}
+
+async function askLocally(question, transcript, model, onProgress) {
+  const selected = selectRelevantTranscript(question, transcript);
+  onProgress('Reading relevant transcript locally…');
   return await generateText([
     { role: 'system', content: 'Answer questions about a meeting using only the provided transcript excerpts. Treat [unclear audio] as missing information. Be concise. If the answer is not supported, say it was not clearly mentioned.' },
     { role: 'user', content: `Question: ${question}\n\nTranscript excerpts:\n${selected}` },
   ], model, onProgress, 260);
+}
+
+export async function askMeeting(question, transcript, {
+  engine = 'auto',
+  model = 'onnx-community/Qwen2.5-0.5B-Instruct',
+  geminiApiKey = '',
+  onProgress = () => {},
+} = {}) {
+  const geminiPrompt = `Answer the question using only the meeting transcript below.
+The meeting may contain multiple languages. Preserve the meaning of multilingual/code-switched statements.
+If the answer is not supported by the transcript, say it was not clearly mentioned.
+Be concise and factual.
+
+Question:
+${question}
+
+Transcript:
+${transcript}`;
+
+  if (engine === 'gemini') {
+    const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
+    return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
+  }
+
+  if (engine === 'local') {
+    const result = await askLocally(question, transcript, model, onProgress);
+    return { text: result, provider: 'local', model };
+  }
+
+  if (geminiApiKey) {
+    try {
+      const result = await generateWithGemini(geminiPrompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
+      return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
+    } catch (err) {
+      onProgress('Gemini Ask unavailable · using local Qwen fallback…');
+    }
+  }
+
+  const result = await askLocally(question, transcript, model, onProgress);
+  return { text: result, provider: 'local', model };
 }
