@@ -1,5 +1,7 @@
-import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js';
-import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js';
+import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js?v=0.4.8';
+import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js?v=0.4.8';
+
+const APP_VERSION = '0.4.8';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -566,7 +568,11 @@ if (navigator.mediaDevices?.addEventListener) {
   });
 }
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js?v=' + APP_VERSION)
+    .then(reg => reg.update().catch(() => {}))
+    .catch(() => {});
+}
 loadAiSettings();
 detectCapabilities();
 refreshAudioInputs().catch(() => {});
