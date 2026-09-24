@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon.svg" />
-  <link rel="stylesheet" href="./styles.css?v=0.4.6" />
+  <link rel="stylesheet" href="./styles.css?v=0.4.7" />
   <title>Meeting Pocket</title>
 </head>
 <body>
@@ -27,7 +27,7 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.6</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.7</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
         <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
@@ -143,22 +143,22 @@
         <label class="field">
           <span>Transcription engine</span>
           <select id="transcriptionEngineSelect">
-            <option value="auto" selected>Auto · Gemini → Groq → Local</option>
+            <option value="auto" selected>Auto · Groq → Gemini → Local</option>
+            <option value="groq">Groq Whisper Large V3 Turbo only</option>
             <option value="gemini">Gemini 3.5 Transcribe only</option>
-            <option value="groq">Groq Whisper Large V3 only</option>
             <option value="local">Private / offline · Local Whisper</option>
           </select>
           <small class="field-help">Auto detects English, Malay, Mandarin and Tamil without choosing one meeting language.</small>
         </label>
         <label class="field">
-          <span>Gemini API key · recommended</span>
+          <span>Gemini API key · optional fallback</span>
           <input id="geminiApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Gemini API key" />
           <small class="field-help">Stored only in this browser on this device. It is never written to the GitHub repo.</small>
         </label>
         <label class="field">
-          <span>Groq API key · optional fallback</span>
-          <input id="groqApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Groq key or leave blank" />
-          <small class="field-help">Used only if Gemini is unavailable in Auto mode.</small>
+          <span>Groq API key · recommended</span>
+          <input id="groqApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Groq API key" />
+          <small class="field-help">Primary cloud engine for transcription, Summary and Ask. Stored only in this browser on this device and never written to GitHub.</small>
         </label>
         <label class="field">
           <span>Local fallback model</span>
@@ -171,11 +171,12 @@
         <label class="field">
           <span>Summary & Ask AI</span>
           <select id="summaryEngineSelect">
-            <option value="auto" selected>Auto · Gemini 3.8 Flash → Local Qwen (desktop)</option>
+            <option value="auto" selected>Auto · Groq Qwen 3.8 → Gemini → Local (desktop)</option>
+            <option value="groq">Groq Qwen 3.8 27B only</option>
             <option value="gemini">Gemini 3.8 Flash only</option>
             <option value="local">Private / offline · Local Qwen (desktop only)</option>
           </select>
-          <small class="field-help">Uses the same Gemini key above. On phones/tablets, Gemini errors are shown safely instead of loading Qwen and risking a browser crash. Local Qwen fallback is desktop-only.</small>
+          <small class="field-help">Groq is used first for Summary and Ask. Gemini is fallback. On phones/tablets, local Qwen stays disabled to prevent browser crashes.</small>
         </label>
         <label class="field">
           <span>Local summary fallback</span>
@@ -193,6 +194,6 @@
     </dialog>
   </main>
 
-  <script type="module" src="./app.js?v=0.4.6"></script>
+  <script type="module" src="./app.js?v=0.4.7"></script>
 </body>
 </html>
