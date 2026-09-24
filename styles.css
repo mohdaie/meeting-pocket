@@ -63,3 +63,5 @@ body:has(.view.minimalist-screen.active){overflow:hidden;position:fixed;inset:0;
 .usage-event-right{text-align:right}.usage-event-right strong{font-variant-numeric:tabular-nums}
 .usage-clear-btn{width:100%;min-height:42px;margin-top:2px;border:1px solid #352020;border-radius:14px;background:#130a0a;color:#c99797;font-weight:700}
 @media(max-width:420px){.usage-grid{grid-template-columns:1fr 1fr}.usage-stat{padding:12px}.usage-stat>strong{font-size:1.18rem}.quota-head{align-items:flex-start}}
+
+.answer-meta{margin-top:10px;color:#666;font-size:.72rem;line-height:1.4}
