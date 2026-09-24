@@ -1,4 +1,4 @@
-import { recordGroqUsage, groqRateHeaders } from './groq-usage.js?v=0.5.0';
+import { recordGroqUsage, groqRateHeaders } from './groq-usage.js?v=0.5.1';
 
 const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0';
 let hf = null;
