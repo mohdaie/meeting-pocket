@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon.svg" />
-  <link rel="stylesheet" href="./styles.css?v=0.4.8" />
+  <link rel="stylesheet" href="./styles.css?v=0.5.0" />
   <title>Meeting Pocket</title>
 </head>
 <body>
@@ -27,7 +27,7 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.8</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.5.0</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
         <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
@@ -159,6 +159,7 @@
           <span>Groq API key · recommended</span>
           <input id="groqApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Groq API key" />
           <small class="field-help">Primary cloud engine for transcription, Summary and Ask. Stored only in this browser on this device and never written to GitHub.</small>
+          <button id="groqUsageBtn" class="secondary-btn" type="button">Open Groq usage dashboard</button>
         </label>
         <label class="field">
           <span>Local fallback model</span>
@@ -192,8 +193,24 @@
         <button class="primary-btn" value="close">Done</button>
       </form>
     </dialog>
+
+    <dialog id="groqUsageDialog" class="usage-dialog">
+      <form method="dialog" class="dialog-card usage-dialog-card">
+        <div class="section-title-row">
+          <div>
+            <p class="brand-eyebrow usage-eyebrow">GROQ MONITOR</p>
+            <h2>Usage dashboard</h2>
+          </div>
+          <button class="icon-btn" value="close" aria-label="Close Groq usage dashboard">✕</button>
+        </div>
+        <p class="usage-subtitle">Live Meeting Pocket usage, quota signals and recent Groq calls. API key is never displayed.</p>
+        <div id="groqUsageContent"></div>
+        <button id="clearGroqUsageBtn" class="usage-clear-btn" type="button">Clear local usage history</button>
+        <button class="primary-btn" value="close">Done</button>
+      </form>
+    </dialog>
   </main>
 
-  <script type="module" src="./app.js?v=0.4.8"></script>
+  <script type="module" src="./app.js?v=0.5.0"></script>
 </body>
 </html>
