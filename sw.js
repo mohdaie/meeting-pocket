@@ -1,11 +1,11 @@
-const CACHE = 'meeting-pocket-shell-v0.4.7-r1';
+const CACHE = 'meeting-pocket-shell-v0.4.8-r1';
 const SHELL = [
   './',
   './index.html',
-  './styles.css?v=0.4.7',
-  './app.js?v=0.4.7',
-  './db.js',
-  './ai.js',
+  './styles.css?v=0.4.8',
+  './app.js?v=0.4.8',
+  './db.js?v=0.4.8',
+  './ai.js?v=0.4.8',
   './manifest.webmanifest',
   './icons/icon.svg'
 ];
@@ -31,7 +31,7 @@ self.addEventListener('fetch', event => {
   // Network-first prevents installed PWA refreshes from getting stuck on an
   // older Meeting Pocket build. Cached shell remains available offline.
   event.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-store' })
       .then(response => {
         if (response.ok) {
           const clone = response.clone();
