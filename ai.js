@@ -763,18 +763,165 @@ ${text}`;
   return { text: result, provider: 'local', model };
 }
 
-function selectRelevantTranscript(question, transcript) {
-  const terms = question.toLowerCase().split(/\W+/).filter(x => x.length > 3);
-  const paras = transcript.split(/\n+/).filter(Boolean);
-  const scored = paras.map((p, idx) => ({
-    p, idx,
-    score: terms.reduce((n,t) => n + (p.toLowerCase().includes(t) ? 2 : 0), 0),
-  })).sort((a,b) => b.score - a.score || a.idx - b.idx);
+function askTerms(text) {
+  const stop = new Set([
+    'the','a','an','and','or','but','is','are','was','were','be','been','being',
+    'what','when','where','which','who','whom','whose','why','how','did','does','do',
+    'this','that','these','those','they','them','their','there','here','about','from',
+    'with','into','for','of','to','in','on','at','by','we','our','us','i','me','my',
+    'apa','bila','mana','siapa','kenapa','bagaimana','yang','dan','atau','ini','itu',
+    'dari','dengan','untuk','pada','kami','kita','mereka'
+  ]);
+  return (text.toLowerCase().match(/[\p{L}\p{N}'-]+/gu) || [])
+    .filter(x => x.length >= 2 && !stop.has(x));
+}
 
-  return (scored.some(x => x.score > 0) ? scored.slice(0,12) : scored.slice(0,8))
-    .sort((a,b) => a.idx - b.idx)
-    .map(x => x.p)
-    .join('\n');
+function questionCueTerms(question) {
+  const q = question.toLowerCase();
+  const cues = [];
+  const add = (...xs) => cues.push(...xs);
+
+  if (/decid|agree|approve|confirm|keputusan|setuju|决定|同意|批准/i.test(q)) {
+    add('decide','decided','decision','agree','agreed','approved','confirmed','keputusan','setuju','diputuskan','决定','同意','批准');
+  }
+  if (/action|task|owner|follow.?up|next step|tindakan|tugas|负责人|行动/i.test(q)) {
+    add('action','task','owner','follow up','next step','will','need to','tindakan','tugas','akan','负责人','行动');
+  }
+  if (/date|deadline|when|bila|tarikh|期限|日期/i.test(q)) {
+    add('deadline','date','due','by ','before','after','tomorrow','week','month','tarikh','bila','sebelum','selepas','期限','日期');
+  }
+  if (/risk|issue|problem|concern|block|risiko|masalah|风险|问题/i.test(q)) {
+    add('risk','issue','problem','concern','blocked','risiko','masalah','风险','问题');
+  }
+  if (/cost|budget|price|amount|berapa|kos|harga|费用|预算/i.test(q)) {
+    add('cost','budget','price','amount','$','usd','sgd','rm','kos','harga','费用','预算');
+  }
+  return [...new Set(cues)];
+}
+
+function chunkTranscriptForAsk(transcript, targetChars = 1100) {
+  const clean = (transcript || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+
+  const sentences = clean.match(/[^.!?。！？]+[.!?。！？]?/g) || [clean];
+  const chunks = [];
+  let current = '';
+
+  for (const raw of sentences) {
+    const sentence = raw.trim();
+    if (!sentence) continue;
+
+    if (current && current.length + sentence.length + 1 > targetChars) {
+      chunks.push(current.trim());
+      // Small sentence-level overlap preserves context across chunk boundaries.
+      const tail = current.match(/[^.!?。！？]+[.!?。！？]?$/)?.[0]?.trim() || '';
+      current = tail && tail.length < 320 ? tail + ' ' + sentence : sentence;
+    } else {
+      current += (current ? ' ' : '') + sentence;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+function selectRelevantTranscript(question, transcript, maxChars = 8000) {
+  const source = (transcript || '').trim();
+  if (!source) return { text: '', selectedChars: 0, totalChars: 0, chunksSelected: 0, totalChunks: 0 };
+
+  // Short meetings are already cheap; keep all context to maximize accuracy.
+  if (source.length <= maxChars) {
+    return {
+      text: source,
+      selectedChars: source.length,
+      totalChars: source.length,
+      chunksSelected: 1,
+      totalChunks: 1,
+    };
+  }
+
+  const chunks = chunkTranscriptForAsk(source);
+  const terms = askTerms(question);
+  const cues = questionCueTerms(question);
+  const qLower = question.toLowerCase().trim();
+
+  const scored = chunks.map((text, idx) => {
+    const lower = text.toLowerCase();
+    let score = 0;
+
+    for (const term of terms) {
+      let pos = lower.indexOf(term);
+      let hits = 0;
+      while (pos >= 0 && hits < 4) {
+        hits++;
+        pos = lower.indexOf(term, pos + term.length);
+      }
+      score += hits * 4;
+    }
+
+    for (const cue of cues) {
+      if (lower.includes(cue)) score += 3;
+    }
+
+    if (qLower.length >= 8 && lower.includes(qLower)) score += 12;
+    return { idx, text, score };
+  });
+
+  const ranked = [...scored].sort((a,b) => b.score - a.score || a.idx - b.idx);
+  const selected = new Set();
+
+  if (ranked[0]?.score > 0) {
+    // Pick strongest passages first and include one neighbour around each hit.
+    for (const hit of ranked.slice(0, 6)) {
+      if (hit.score <= 0) break;
+      selected.add(hit.idx);
+      if (hit.idx > 0) selected.add(hit.idx - 1);
+      if (hit.idx + 1 < chunks.length) selected.add(hit.idx + 1);
+    }
+  } else {
+    // Generic question with no lexical hit: sample the meeting across time
+    // instead of uploading the entire transcript again.
+    const points = [0, .2, .4, .6, .8, 1]
+      .map(x => Math.min(chunks.length - 1, Math.round((chunks.length - 1) * x)));
+    points.forEach(i => selected.add(i));
+  }
+
+  const ordered = [...selected].sort((a,b) => a - b);
+  const chosen = [];
+  let used = 0;
+  for (const idx of ordered) {
+    const text = chunks[idx];
+    if (!text) continue;
+    if (chosen.length && used + text.length > maxChars) continue;
+    chosen.push({ idx, text });
+    used += text.length;
+    if (used >= maxChars) break;
+  }
+
+  // If lexical retrieval returned too little, add the next-best chunks while
+  // staying inside the budget. This keeps answers useful without resending
+  // an hour-long transcript.
+  if (used < Math.min(4200, maxChars)) {
+    for (const hit of ranked) {
+      if (chosen.some(x => x.idx === hit.idx)) continue;
+      if (used + hit.text.length > maxChars) continue;
+      chosen.push({ idx: hit.idx, text: hit.text });
+      used += hit.text.length;
+      if (used >= Math.min(5200, maxChars)) break;
+    }
+    chosen.sort((a,b) => a.idx - b.idx);
+  }
+
+  const text = chosen
+    .map((x, i) => `[Relevant excerpt ${i + 1}]\n${x.text}`)
+    .join('\n\n');
+
+  return {
+    text,
+    selectedChars: text.length,
+    totalChars: source.length,
+    chunksSelected: chosen.length,
+    totalChunks: chunks.length,
+  };
 }
 
 async function askLocally(question, transcript, model, onProgress) {
@@ -782,7 +929,7 @@ async function askLocally(question, transcript, model, onProgress) {
   onProgress('Reading relevant transcript locally…');
   return await generateText([
     { role: 'system', content: 'Answer questions about a meeting using only the provided transcript excerpts. Treat [unclear audio] as missing information. Be concise. If the answer is not supported, say it was not clearly mentioned.' },
-    { role: 'user', content: `Question: ${question}\n\nTranscript excerpts:\n${selected}` },
+    { role: 'user', content: `Question: ${question}\n\nTranscript excerpts:\n${selected.text}` },
   ], model, onProgress, 260);
 }
 
@@ -793,31 +940,52 @@ export async function askMeeting(question, transcript, {
   groqApiKey = '',
   onProgress = () => {},
 } = {}) {
-  const prompt = `Answer the question using only the meeting transcript below.
-The meeting may contain multiple languages. Preserve the meaning of multilingual/code-switched statements.
-If the answer is not supported by the transcript, say it was not clearly mentioned.
+  const selected = selectRelevantTranscript(question, transcript);
+  const reduction = selected.totalChars
+    ? Math.max(0, Math.round((1 - selected.selectedChars / selected.totalChars) * 100))
+    : 0;
+
+  if (reduction > 0) {
+    onProgress(`Finding relevant sections · ${selected.chunksSelected}/${selected.totalChunks} chunks · ~${reduction}% less context`);
+  } else {
+    onProgress('Reading meeting context…');
+  }
+
+  const prompt = `Answer the question using only the relevant meeting transcript excerpts below.
+The excerpts were selected locally from the full meeting to reduce token usage.
+They may mix English, Malay, Mandarin, Tamil or other languages.
+Preserve the meaning of multilingual/code-switched statements.
+If the answer is not supported by these excerpts, say it was not clearly mentioned; do not invent details.
 Be concise and factual.
 
 Question:
 ${question}
 
-Transcript:
-${transcript}`;
+Relevant transcript excerpts:
+${selected.text}`;
+
+  const resultMeta = {
+    contextChars: selected.selectedChars,
+    originalChars: selected.totalChars,
+    contextReductionPct: reduction,
+    contextChunks: selected.chunksSelected,
+    totalChunks: selected.totalChunks,
+  };
 
   if (engine === 'groq') {
     const result = await generateWithGroq(prompt, groqApiKey, onProgress, 'Asking Groq Qwen 3.8 27B');
-    return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL };
+    return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL, ...resultMeta };
   }
 
   if (engine === 'gemini') {
     const result = await generateWithGemini(prompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
-    return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
+    return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL, ...resultMeta };
   }
 
   if (engine === 'local') {
     if (isMobileDevice()) throw mobileLocalModelError('Local Qwen Ask');
     const result = await askLocally(question, transcript, model, onProgress);
-    return { text: result, provider: 'local', model };
+    return { text: result, provider: 'local', model, ...resultMeta };
   }
 
   const attempts = [];
@@ -825,7 +993,7 @@ ${transcript}`;
   if (groqApiKey) {
     try {
       const result = await generateWithGroq(prompt, groqApiKey, onProgress, 'Asking Groq Qwen 3.8 27B');
-      return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL };
+      return { text: result, provider: 'groq', model: GROQ_SUMMARY_MODEL, ...resultMeta };
     } catch (err) {
       attempts.push('Groq: ' + (err?.message || err));
       onProgress(geminiApiKey ? 'Groq unavailable · trying Gemini…' : 'Groq unavailable…');
@@ -835,7 +1003,7 @@ ${transcript}`;
   if (geminiApiKey) {
     try {
       const result = await generateWithGemini(prompt, geminiApiKey, onProgress, 'Asking Gemini 3.8 Flash');
-      return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL };
+      return { text: result, provider: 'gemini', model: GEMINI_SUMMARY_MODEL, ...resultMeta };
     } catch (err) {
       attempts.push('Gemini: ' + (err?.message || err));
       onProgress('Cloud Ask unavailable…');
@@ -851,5 +1019,5 @@ ${transcript}`;
 
   onProgress('Cloud AI unavailable · using local Qwen fallback…');
   const result = await askLocally(question, transcript, model, onProgress);
-  return { text: result, provider: 'local', model };
+  return { text: result, provider: 'local', model, ...resultMeta };
 }
