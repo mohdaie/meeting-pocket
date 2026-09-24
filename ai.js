@@ -1,3 +1,5 @@
+import { recordGroqUsage, groqRateHeaders } from './groq-usage.js?v=0.5.0';
+
 const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0';
 let hf = null;
 let transcriber = null;
@@ -358,7 +360,7 @@ async function transcribeWithGroq(blob, apiKey, onProgress) {
     throw new Error('Recording is over Groq free-tier 25 MB upload limit.');
   }
 
-  onProgress('Transcribing with Groq Whisper Large V3…');
+  onProgress('Transcribing with Groq Whisper Large V3 Turbo…');
   const form = new FormData();
   form.append('file', blob, 'meeting-pocket.' + extensionForMime(blob.type));
   form.append('model', GROQ_TRANSCRIBE_MODEL);
@@ -366,22 +368,49 @@ async function transcribeWithGroq(blob, apiKey, onProgress) {
   form.append('temperature', '0');
   form.append('timestamp_granularities[]', 'segment');
 
+  const started = performance.now();
   const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + apiKey },
     body: form,
   });
-  if (!response.ok) throw await responseError(response, 'Groq transcription');
+  const rate = groqRateHeaders(response);
+  if (!response.ok) {
+    const err = await responseError(response, 'Groq transcription');
+    recordGroqUsage({
+      kind: 'transcription',
+      model: GROQ_TRANSCRIBE_MODEL,
+      ok: false,
+      status: response.status,
+      latencyMs: performance.now() - started,
+      rate,
+      error: err.message,
+    });
+    throw err;
+  }
 
   const payload = await response.json();
+  const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  const segmentDuration = segments.reduce((m, x) => Math.max(m, Number(x?.end) || 0), 0);
+  const audioSeconds = Number(payload?.duration) || segmentDuration || 0;
+
+  recordGroqUsage({
+    kind: 'transcription',
+    model: GROQ_TRANSCRIBE_MODEL,
+    ok: true,
+    status: response.status,
+    audioSeconds,
+    latencyMs: performance.now() - started,
+    serverTotalSeconds: Number(payload?.x_groq?.usage?.total_time || 0),
+    rate,
+  });
+
   const result = {
     text: payload?.text || '',
-    chunks: Array.isArray(payload?.segments)
-      ? payload.segments.map(s => ({
-          text: s.text || '',
-          timestamp: [s.start ?? null, s.end ?? null],
-        }))
-      : [],
+    chunks: segments.map(s => ({
+      text: s.text || '',
+      timestamp: [s.start ?? null, s.end ?? null],
+    })),
   };
   const filtered = filterTranscript(result);
   return {
@@ -534,6 +563,7 @@ async function generateWithGroq(prompt, apiKey, onProgress, label = 'Groq Qwen 3
   if (!apiKey) throw new Error('Groq API key is not configured.');
   onProgress(label + '…');
 
+  const started = performance.now();
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -556,8 +586,38 @@ async function generateWithGroq(prompt, apiKey, onProgress, label = 'Groq Qwen 3
     }),
   });
 
-  if (!response.ok) throw await responseError(response, label);
+  const rate = groqRateHeaders(response);
+  const kind = /^Asking/i.test(label) ? 'ask' : 'summary';
+
+  if (!response.ok) {
+    const err = await responseError(response, label);
+    recordGroqUsage({
+      kind,
+      model: GROQ_SUMMARY_MODEL,
+      ok: false,
+      status: response.status,
+      latencyMs: performance.now() - started,
+      rate,
+      error: err.message,
+    });
+    throw err;
+  }
+
   const payload = await response.json();
+  const usage = payload?.usage || {};
+  recordGroqUsage({
+    kind,
+    model: GROQ_SUMMARY_MODEL,
+    ok: true,
+    status: response.status,
+    inputTokens: Number(usage.prompt_tokens || usage.input_tokens || 0),
+    outputTokens: Number(usage.completion_tokens || usage.output_tokens || 0),
+    totalTokens: Number(usage.total_tokens || 0),
+    latencyMs: performance.now() - started,
+    serverTotalSeconds: Number(usage.total_time || 0),
+    rate,
+  });
+
   const text = payload?.choices?.[0]?.message?.content?.trim() || '';
   if (!text) throw new Error(label + ' returned an empty response.');
   return text;
