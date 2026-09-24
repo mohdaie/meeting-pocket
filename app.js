@@ -23,6 +23,7 @@ const transcriptionEngineSelect = $('#transcriptionEngineSelect');
 const geminiApiKeyInput = $('#geminiApiKeyInput');
 const groqApiKeyInput = $('#groqApiKeyInput');
 const speechModelSelect = $('#speechModelSelect');
+const summaryEngineSelect = $('#summaryEngineSelect');
 const summaryModelSelect = $('#summaryModelSelect');
 const keepAwakeToggle = $('#keepAwakeToggle');
 const globalDimBtn = $('#globalDimBtn');
@@ -89,6 +90,7 @@ const MIC_STORAGE_KEY = 'meeting-pocket-audio-input';
 const TRANSCRIPTION_ENGINE_KEY = 'meeting-pocket-transcription-engine';
 const GEMINI_KEY_STORAGE = 'meeting-pocket-gemini-api-key';
 const GROQ_KEY_STORAGE = 'meeting-pocket-groq-api-key';
+const SUMMARY_ENGINE_KEY = 'meeting-pocket-summary-engine';
 
 function loadAiSettings() {
   if (transcriptionEngineSelect) {
@@ -96,6 +98,7 @@ function loadAiSettings() {
   }
   if (geminiApiKeyInput) geminiApiKeyInput.value = localStorage.getItem(GEMINI_KEY_STORAGE) || '';
   if (groqApiKeyInput) groqApiKeyInput.value = localStorage.getItem(GROQ_KEY_STORAGE) || '';
+  if (summaryEngineSelect) summaryEngineSelect.value = localStorage.getItem(SUMMARY_ENGINE_KEY) || 'auto';
 }
 
 function saveAiSetting(key, value) {
@@ -108,6 +111,10 @@ function transcriptionProviderLabel(result) {
   if (result?.provider === 'gemini') return 'Gemini 3.5 Transcribe';
   if (result?.provider === 'groq') return 'Groq Whisper Large V3';
   return 'Local Whisper';
+}
+
+function summaryProviderLabel(result) {
+  return result?.provider === 'gemini' ? 'Gemini 3.8 Flash' : 'Local Qwen';
 }
 
 function selectedMicId() {
@@ -432,15 +439,18 @@ async function doSummarize() {
   const btn = $('#summarizeBtn');
   btn.disabled = true;
   try {
-    const summary = await summarizeTranscript(currentMeeting.transcript, {
+    const result = await summarizeTranscript(currentMeeting.transcript, {
+      engine: summaryEngineSelect?.value || 'auto',
       model: summaryModelSelect.value,
+      geminiApiKey: geminiApiKeyInput?.value.trim() || '',
       onProgress: (s) => $('#summaryStatus').textContent = s,
     });
-    currentMeeting.summary = summary;
+    currentMeeting.summary = result.text || '';
     currentMeeting.status = 'summarized';
+    currentMeeting.summaryProvider = result.provider || 'local';
     await putMeeting(currentMeeting);
-    $('#summaryStatus').textContent = 'Done · generated locally';
-    renderSummary(summary);
+    $('#summaryStatus').textContent = `Done · ${summaryProviderLabel(result)}`;
+    renderSummary(currentMeeting.summary);
   } catch (err) {
     $('#summaryStatus').textContent = `Summary failed: ${err.message || err}`;
   } finally { btn.disabled = false; }
@@ -484,11 +494,13 @@ async function doAsk() {
   btn.disabled = true;
   try {
     $('#answerBox').textContent = 'Reading meeting…';
-    const ans = await askMeeting(q, currentMeeting.transcript, {
+    const result = await askMeeting(q, currentMeeting.transcript, {
+      engine: summaryEngineSelect?.value || 'auto',
       model: summaryModelSelect.value,
+      geminiApiKey: geminiApiKeyInput?.value.trim() || '',
       onProgress: s => $('#answerBox').textContent = s,
     });
-    $('#answerBox').textContent = ans;
+    $('#answerBox').textContent = result.text || '';
   } catch (err) {
     $('#answerBox').textContent = `Could not answer: ${err.message || err}`;
   } finally { btn.disabled = false; }
@@ -521,6 +533,9 @@ geminiApiKeyInput.onchange = () => {
 groqApiKeyInput.onchange = () => {
   saveAiSetting(GROQ_KEY_STORAGE, groqApiKeyInput.value);
   detectCapabilities();
+};
+summaryEngineSelect.onchange = () => {
+  localStorage.setItem(SUMMARY_ENGINE_KEY, summaryEngineSelect.value || 'auto');
 };
 $('#historyBtn').onclick = async () => {
   await refreshHistory();
