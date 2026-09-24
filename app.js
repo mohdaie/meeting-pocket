@@ -1,8 +1,8 @@
-import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js?v=0.5.0';
-import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js?v=0.5.0';
-import { getGroqUsageSnapshot, clearGroqUsage, GROQ_FREE_REFERENCE } from './groq-usage.js?v=0.5.0';
+import { putMeeting, getMeeting, listMeetings, putChunk, getChunks, deleteMeetingFully } from './db.js?v=0.5.1';
+import { transcribeBlob, summarizeTranscript, askMeeting } from './ai.js?v=0.5.1';
+import { getGroqUsageSnapshot, clearGroqUsage, GROQ_FREE_REFERENCE } from './groq-usage.js?v=0.5.1';
 
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.5.1';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -34,6 +34,7 @@ const groqUsageBtn = $('#groqUsageBtn');
 const groqUsageDialog = $('#groqUsageDialog');
 const groqUsageContent = $('#groqUsageContent');
 const clearGroqUsageBtn = $('#clearGroqUsageBtn');
+const answerMeta = $('#answerMeta');
 
 let mediaRecorder = null;
 let mediaStream = null;
@@ -517,6 +518,7 @@ async function openMeeting(id) {
   $('#summaryStatus').textContent = meeting.summary ? 'Saved locally.' : 'No summary yet.';
   renderSummary(meeting.summary || '');
   $('#answerBox').textContent = '';
+  if (answerMeta) answerMeta.textContent = '';
   $('#questionInput').value = '';
   showView(meetingView);
 }
@@ -628,8 +630,15 @@ async function doAsk() {
       onProgress: s => $('#answerBox').textContent = s,
     });
     $('#answerBox').textContent = result.text || '';
+    if (answerMeta) {
+      const reduced = Number(result.contextReductionPct || 0);
+      answerMeta.textContent = reduced > 0
+        ? `Smart context · ${result.contextChunks}/${result.totalChunks} transcript chunks sent · ~${reduced}% less context`
+        : 'Smart context · full short transcript used';
+    }
   } catch (err) {
     $('#answerBox').textContent = `Could not answer: ${err.message || err}`;
+    if (answerMeta) answerMeta.textContent = '';
   } finally { btn.disabled = false; }
 }
 
