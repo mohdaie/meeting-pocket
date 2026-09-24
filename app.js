@@ -76,10 +76,10 @@ function detectCapabilities() {
   const webgpu = 'gpu' in navigator;
   const idb = 'indexedDB' in window;
   const ready = mic && recorder && idb;
-  const aiStatus = localStorage.getItem(GEMINI_KEY_STORAGE)
-    ? 'Gemini multilingual ready'
-    : localStorage.getItem(GROQ_KEY_STORAGE)
-      ? 'Groq multilingual ready'
+  const aiStatus = localStorage.getItem(GROQ_KEY_STORAGE)
+    ? 'Groq multilingual ready'
+    : localStorage.getItem(GEMINI_KEY_STORAGE)
+      ? 'Gemini multilingual ready'
       : (webgpu ? 'local Whisper fallback ready' : 'local browser fallback mode');
   capabilityPill.textContent = ready
     ? `Ready to record · ${aiStatus}`
@@ -109,12 +109,14 @@ function saveAiSetting(key, value) {
 
 function transcriptionProviderLabel(result) {
   if (result?.provider === 'gemini') return 'Gemini 3.5 Transcribe';
-  if (result?.provider === 'groq') return 'Groq Whisper Large V3';
+  if (result?.provider === 'groq') return 'Groq Whisper Large V3 Turbo';
   return 'Local Whisper';
 }
 
 function summaryProviderLabel(result) {
-  return result?.provider === 'gemini' ? 'Gemini 3.8 Flash' : 'Local Qwen';
+  if (result?.provider === 'groq') return 'Groq Qwen 3.8 27B';
+  if (result?.provider === 'gemini') return 'Gemini 3.8 Flash';
+  return 'Local Qwen';
 }
 
 function selectedMicId() {
@@ -443,6 +445,7 @@ async function doSummarize() {
       engine: summaryEngineSelect?.value || 'auto',
       model: summaryModelSelect.value,
       geminiApiKey: geminiApiKeyInput?.value.trim() || '',
+      groqApiKey: groqApiKeyInput?.value.trim() || '',
       onProgress: (s) => $('#summaryStatus').textContent = s,
     });
     currentMeeting.summary = result.text || '';
@@ -498,6 +501,7 @@ async function doAsk() {
       engine: summaryEngineSelect?.value || 'auto',
       model: summaryModelSelect.value,
       geminiApiKey: geminiApiKeyInput?.value.trim() || '',
+      groqApiKey: groqApiKeyInput?.value.trim() || '',
       onProgress: s => $('#answerBox').textContent = s,
     });
     $('#answerBox').textContent = result.text || '';
