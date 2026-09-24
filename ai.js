@@ -807,9 +807,31 @@ function chunkTranscriptForAsk(transcript, targetChars = 1100) {
   const chunks = [];
   let current = '';
 
+  const pushLongText = (text) => {
+    let remaining = text.trim();
+    while (remaining.length > targetChars) {
+      let cut = remaining.lastIndexOf(' ', targetChars);
+      if (cut < targetChars * 0.55) cut = targetChars;
+      chunks.push(remaining.slice(0, cut).trim());
+      // Keep a small character overlap so names/context on the boundary survive.
+      const overlapStart = Math.max(0, cut - 140);
+      remaining = remaining.slice(overlapStart).trim();
+    }
+    return remaining;
+  };
+
   for (const raw of sentences) {
     const sentence = raw.trim();
     if (!sentence) continue;
+
+    if (sentence.length > targetChars) {
+      if (current.trim()) {
+        chunks.push(current.trim());
+        current = '';
+      }
+      current = pushLongText(sentence);
+      continue;
+    }
 
     if (current && current.length + sentence.length + 1 > targetChars) {
       chunks.push(current.trim());
