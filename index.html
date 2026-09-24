@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon.svg" />
-  <link rel="stylesheet" href="./styles.css?v=0.4.5" />
+  <link rel="stylesheet" href="./styles.css?v=0.4.6" />
   <title>Meeting Pocket</title>
 </head>
 <body>
@@ -27,7 +27,7 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.5</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.6</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
         <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
@@ -171,16 +171,16 @@
         <label class="field">
           <span>Summary & Ask AI</span>
           <select id="summaryEngineSelect">
-            <option value="auto" selected>Auto · Gemini 3.8 Flash → Local Qwen</option>
+            <option value="auto" selected>Auto · Gemini 3.8 Flash → Local Qwen (desktop)</option>
             <option value="gemini">Gemini 3.8 Flash only</option>
-            <option value="local">Private / offline · Local Qwen</option>
+            <option value="local">Private / offline · Local Qwen (desktop only)</option>
           </select>
-          <small class="field-help">Uses the same Gemini key above. Auto falls back to on-device Qwen if Gemini is unavailable.</small>
+          <small class="field-help">Uses the same Gemini key above. On phones/tablets, Gemini errors are shown safely instead of loading Qwen and risking a browser crash. Local Qwen fallback is desktop-only.</small>
         </label>
         <label class="field">
           <span>Local summary fallback</span>
           <select id="summaryModelSelect">
-            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (multilingual)</option>
+            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B (multilingual · desktop only)</option>
           </select>
         </label>
         <label class="switch-row">
@@ -193,6 +193,6 @@
     </dialog>
   </main>
 
-  <script type="module" src="./app.js?v=0.4.5"></script>
+  <script type="module" src="./app.js?v=0.4.6"></script>
 </body>
 </html>
