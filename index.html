@@ -8,10 +8,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon.svg" />
-  <link rel="stylesheet" href="./styles.css?v=0.4.0" />
+  <link rel="stylesheet" href="./styles.css?v=0.4.1" />
   <title>Meeting Pocket</title>
 </head>
 <body>
+  <button id="globalDimBtn" class="global-dim-btn" type="button" aria-label="Dim screen" aria-pressed="false" title="Dim screen">◐</button>
+  <div id="screenDimmer" class="screen-dimmer" aria-hidden="true"></div>
   <main id="app">
     <section id="homeView" class="view active minimalist-screen">
       <header class="chrome">
@@ -25,7 +27,7 @@
 
       <div class="center-canvas">
         <div class="logo-block">
-          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.0</span></h2>
+          <h2 class="logo-mark">Meeting<br/>Pocket <span class="logo-version">v0.4.1</span></h2>
         </div>
         <p id="capabilityPill" class="capability-pill"></p>
         <p id="selectedMicPill" class="mic-pill">🎤 Microphone: Automatic</p>
@@ -76,7 +78,7 @@
           <p class="brand-eyebrow">MEETING FILE</p>
           <h1 id="meetingTitle" class="detail-title">Meeting</h1>
         </div>
-        <button id="dimBtn" class="icon-btn" aria-label="Dim screen">◐</button>
+        <div class="chrome-spacer"></div>
       </header>
 
       <div class="tabs">
@@ -182,6 +184,6 @@
     </dialog>
   </main>
 
-  <script type="module" src="./app.js?v=0.4.0"></script>
+  <script type="module" src="./app.js?v=0.4.1"></script>
 </body>
 </html>
